@@ -17,6 +17,7 @@ out vec4 fragColor;
 
 uniform vec2  uResolution;       // viewport canvas dimensions (width, height)
 uniform float uTime;
+uniform float uZoom;
 uniform float uWavelength;       // operational illumination wavelength in micrometers
 uniform float uDesignWavelength; // fabrication design wavelength in micrometers
 uniform float uFocalLength;      // design focal length in micrometers
@@ -32,6 +33,7 @@ uniform int   uShowProbe;        // 1 = show probe line, 0 = hide
 uniform float uTopologicalCharge;
 uniform float uToleranceJitter;   // manufacturing noise [0, 0.15]
 uniform int   uRenderMode;       // 0: Re{E(x,z,t)}, 1: Intensity |E|^2, 2: Phase arg(E)
+uniform int   uLogIntensity;
 uniform float uIntensityMax;     // Max intensity displayed on colormap
 uniform int   uShowRays;         // 0: no, 1: yes
 uniform float uHologramPhase[128];
@@ -57,8 +59,8 @@ void main() {
   // Constant spatial scale regardless of metaoptics parameters:
   // Fixed physical height = 60.0 um, isotropic aspect-corrected width
   float aspect = uResolution.x / max(1.0, uResolution.y);
-  float zMax = 60.0;
-  float xMax = max(30.0, 30.0 * aspect);
+  float zMax = 60.0 / uZoom;
+  float xMax = max(30.0, 30.0 * aspect) / uZoom;
 
   float x = (vUv.x - 0.5) * 2.0 * xMax;
   float z = vUv.y * zMax;
@@ -149,6 +151,7 @@ void main() {
     // Time-averaged Intensity
     float maxVal = max(0.001, uIntensityMax);
     float normI = clamp(intensity / maxVal, 0.0, 1.0);
+    if (uLogIntensity == 1) normI = clamp(1.0 + log(max(normI, 0.0001)) / (4.0 * log(10.0)), 0.0, 1.0);
     baseColor = inferno(normI);
   } else {
     // Phase Angle arg(E)
@@ -304,10 +307,10 @@ export class WavefieldRenderer {
 
     // Uniform locations cache
     const uniforms = [
-      'uResolution', 'uTime', 'uWavelength', 'uDesignWavelength', 'uFocalLength', 'uDiameter',
+      'uResolution', 'uTime', 'uZoom', 'uWavelength', 'uDesignWavelength', 'uFocalLength', 'uDiameter',
       'uDeflectionAngle', 'uDeviceType', 'uTopologicalCharge',
       'uEnableLens', 'uEnableDeflect', 'uEnableVortex', 'uEnableHologram', 'uProbeZ', 'uShowProbe',
-      'uToleranceJitter', 'uRenderMode', 'uIntensityMax', 'uShowRays', 'uHologramPhase'
+      'uToleranceJitter', 'uRenderMode', 'uLogIntensity', 'uIntensityMax', 'uShowRays', 'uHologramPhase'
     ];
     for (const u of uniforms) {
       this.uniformLocations[u] = gl.getUniformLocation(program, u);
@@ -383,6 +386,7 @@ export class WavefieldRenderer {
       gl.uniform2f(this.uniformLocations.uResolution, this.canvas.width, this.canvas.height);
     }
     gl.uniform1f(this.uniformLocations.uTime, this.currentTime);
+    gl.uniform1f(this.uniformLocations.uZoom, state.wavefieldZoom || 1);
     gl.uniform1f(this.uniformLocations.uWavelength, state.wavelength);
     gl.uniform1f(this.uniformLocations.uDesignWavelength, state.designWavelength || 0.532);
     gl.uniform1f(this.uniformLocations.uFocalLength, state.focalLength);
@@ -416,6 +420,7 @@ export class WavefieldRenderer {
     if (state.renderMode === 'intensity') renderModeInt = 1;
     else if (state.renderMode === 'phase') renderModeInt = 2;
     gl.uniform1i(this.uniformLocations.uRenderMode, renderModeInt);
+    gl.uniform1i(this.uniformLocations.uLogIntensity, state.intensityScale === 'log' ? 1 : 0);
     gl.uniform1f(this.uniformLocations.uIntensityMax, state.intensityMax ?? 6.0);
     gl.uniform1i(this.uniformLocations.uShowRays, this.showRays ? 1 : 0);
 
@@ -448,7 +453,7 @@ export class WavefieldRenderer {
       if (rect.height <= 0) return;
       const normY = (e.clientY - rect.top) / rect.height; // 0 at top, 1 at bottom
       // In shader: vUv.y = 0 at bottom (substrate z = 0), 1 at top (z = 60 um)
-      const zMax = 60.0;
+      const zMax = 60.0 / (opticsStore.getState().wavefieldZoom || 1);
       const clampedZ = Math.max(0.0, Math.min(60.0, (1.0 - normY) * zMax));
       const roundedZ = Math.round(clampedZ * 10) / 10;
       opticsStore.getState().setProbeZ(roundedZ);

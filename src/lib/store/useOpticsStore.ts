@@ -25,6 +25,7 @@ export interface OpticsState {
 
   // Transverse XY Profile Slice Settings
   probeZ: number;           // Selected Z slice coordinate in micrometers [0.0, 60.0]
+  wavefieldZoom: number;    // XZ view zoom, anchored at the substrate
   xyZoom: number;           // 1.0 = +/-25 um, 2.0 = +/-12.5 um, 5.0 = +/-5.0 um
   xyViewMode: 'panel' | 'inset'; // 'panel' = 3-panel split, 'inset' = PiP overlay in XZ card
 
@@ -38,6 +39,7 @@ export interface OpticsState {
 
   // Rendering State
   renderMode: RenderMode;
+  intensityScale: 'linear' | 'log';
   isPlaying: boolean;
   intensityMax: number;     // upper limit for intensity colormap mapping (default 6.0)
 
@@ -57,6 +59,7 @@ export interface OpticsState {
   setToleranceJitter: (val: number) => void;
   setMaterial: (val: MaterialType) => void;
   setRenderMode: (val: RenderMode) => void;
+  setIntensityScale: (val: 'linear' | 'log') => void;
   setIsPlaying: (val: boolean) => void;
   setIntensityMax: (val: number) => void;
   setStokes: (val: [number, number, number, number]) => void;
@@ -66,6 +69,7 @@ export interface OpticsState {
   setHologramIterations: (val: number) => void;
   setCghPhaseMask: (val: number[][]) => void;
   setProbeZ: (val: number) => void;
+  setWavefieldZoom: (val: number) => void;
   setXyZoom: (val: number) => void;
   setXyViewMode: (val: 'panel' | 'inset') => void;
   toggleGradient: (gradient: keyof ActiveGradients) => void;
@@ -95,6 +99,7 @@ class OpticsStore {
         hologram: false
       },
       probeZ: 25.0,
+      wavefieldZoom: 1.0,
       xyZoom: 1.0,
       xyViewMode: 'panel',
       stokes: [1, 0, 0, 1], // Right Circular Polarization (RCP)
@@ -102,6 +107,7 @@ class OpticsStore {
       heightNm: 600,
       toleranceJitter: 0.02,
       renderMode: 'field',
+      intensityScale: 'linear',
       isPlaying: true,
       intensityMax: 6.0,
       hologramTarget: 'crest',
@@ -140,6 +146,7 @@ class OpticsStore {
         this.state.setActiveGradients(activeGradients);
       },
       setProbeZ: (probeZ) => this.update({ probeZ }),
+      setWavefieldZoom: (wavefieldZoom) => this.update({ wavefieldZoom }),
       setXyZoom: (xyZoom) => this.update({ xyZoom }),
       setXyViewMode: (xyViewMode) => this.update({ xyViewMode }),
       setDeflectionAngle: (deflectionAngle) => this.update({ deflectionAngle }),
@@ -150,6 +157,7 @@ class OpticsStore {
         this.update({ material, designWavelength: designWl });
       },
       setRenderMode: (renderMode) => this.update({ renderMode }),
+      setIntensityScale: (intensityScale) => this.update({ intensityScale }),
       setIsPlaying: (isPlaying) => this.update({ isPlaying }),
       setIntensityMax: (intensityMax) => this.update({ intensityMax }),
       setStokes: (stokes) => this.update({ stokes }),

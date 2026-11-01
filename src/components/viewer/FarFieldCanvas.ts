@@ -1,4 +1,4 @@
-import { opticsStore } from '@/lib/store/useOpticsStore';
+import { opticsStore, RenderMode } from '@/lib/store/useOpticsStore';
 import { computeFarField, FarFieldInput, FarFieldResult } from '@/lib/optics/farField';
 
 function inferno(t: number): [number, number, number] {
@@ -22,7 +22,12 @@ export class FarFieldRenderer {
   private result: FarFieldResult | null = null;
   private sinMax = 1.0;
   private lastKey = '';
-  private logScale = true;
+  private logScale = false;
+  private intensityMax = 1;
+  private mode: RenderMode = 'field';
+  private animationId: number | null = null;
+  private animationTime = 0;
+  private previousFrame = 0;
   private readonly dynamicRangeDb = 40;
   private off: HTMLCanvasElement;
 
@@ -30,6 +35,39 @@ export class FarFieldRenderer {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.off = document.createElement('canvas');
+  }
+
+  public setMode(mode: RenderMode): void {
+    if (this.mode === mode) return;
+    this.mode = mode;
+    this.syncAnimation();
+    this.draw();
+  }
+
+  private syncAnimation(): void {
+    const shouldAnimate = this.mode !== 'intensity' && opticsStore.getState().isPlaying;
+    if (!shouldAnimate && this.animationId !== null) {
+      cancelAnimationFrame(this.animationId);
+      this.animationId = null;
+      this.previousFrame = 0;
+    } else if (shouldAnimate && this.animationId === null) {
+      const animate = (timestamp: number): void => {
+        if (this.previousFrame && timestamp - this.previousFrame < 50) {
+          this.animationId = requestAnimationFrame(animate);
+          return;
+        }
+        if (this.previousFrame) this.animationTime += (timestamp - this.previousFrame) / 1000;
+        this.previousFrame = timestamp;
+        this.draw();
+        this.animationId = requestAnimationFrame(animate);
+      };
+      this.animationId = requestAnimationFrame(animate);
+    }
+  }
+
+  public setIntensityMax(value: number): void {
+    this.intensityMax = Math.max(0.01, Math.min(1, value));
+    this.draw();
   }
 
   public setLogScale(log: boolean): void {
@@ -81,6 +119,7 @@ export class FarFieldRenderer {
       this.lastKey = key;
       this.result = computeFarField(input, 256, this.sinMax);
     }
+    this.syncAnimation();
     this.draw();
   }
 
@@ -109,14 +148,29 @@ export class FarFieldRenderer {
     const img = octx.createImageData(n, n);
     for (let i = 0; i < n * n; i++) {
       const v = res.intensity[i];
-      let t: number;
-      if (this.logScale) {
-        t = v > 0 ? 1 + (10 * Math.log10(v)) / this.dynamicRangeDb : 0;
+      let r: number, g: number, b: number;
+      if (this.mode === 'field') {
+        const value = Math.max(-1, Math.min(1, res.real[i] * Math.cos(4 * Math.PI * this.animationTime) + res.imaginary[i] * Math.sin(4 * Math.PI * this.animationTime)));
+        const base = [10, 13, 23];
+        const target = value >= 0 ? [31, 217, 255] : [255, 51, 115];
+        const amount = Math.abs(value);
+        [r, g, b] = base.map((c, channel) => Math.round(c + (target[channel] - c) * amount));
+      } else if (this.mode === 'phase') {
+        if (v < 1e-8) {
+          [r, g, b] = [10, 13, 23];
+        } else {
+          const hue = ((Math.atan2(res.imaginary[i], res.real[i]) - 4 * Math.PI * this.animationTime) / (2 * Math.PI) % 1 + 1) % 1;
+          const channel = (offset: number): number => {
+            const k = (offset + hue * 6) % 6;
+            return Math.round(255 * (1 - Math.max(0, Math.min(k, 4 - k, 1))));
+          };
+          [r, g, b] = [channel(5), channel(3), channel(1)];
+        }
       } else {
-        t = Math.sqrt(v); // mild gamma for visibility
+        const normalized = Math.min(1, v / this.intensityMax);
+        const t = this.logScale ? (normalized > 0 ? 1 + (10 * Math.log10(normalized)) / this.dynamicRangeDb : 0) : normalized;
+        [r, g, b] = inferno(Math.min(1, Math.max(0, t)));
       }
-      t = Math.min(1, Math.max(0, t));
-      const [r, g, b] = inferno(t);
       img.data[i * 4] = r;
       img.data[i * 4 + 1] = g;
       img.data[i * 4 + 2] = b;
@@ -161,6 +215,8 @@ export class FarFieldRenderer {
   }
 
   public destroy(): void {
+    if (this.animationId !== null) cancelAnimationFrame(this.animationId);
+    this.animationId = null;
     this.result = null;
   }
 }

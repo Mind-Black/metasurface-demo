@@ -11,20 +11,15 @@ test.describe('Optical Metasurfaces Platform E2E Tests', () => {
 
     await page.goto('/');
 
-    await expect(page.locator('.toolbar-title')).toContainText('Dual Viewport Visualizer');
+    await expect(page.locator('.toolbar-title')).toContainText('Metasurface Visualizer');
     await expect(page.locator('.narrative-module')).toHaveCount(0);
 
     // Check dual viewport canvases
     await expect(page.locator('#lattice-canvas')).toBeVisible();
     await expect(page.locator('#wavefield-canvas')).toBeVisible();
 
-    // Check HUD performance dashboard
-    await expect(page.locator('.hud-grid')).toBeVisible();
-    await expect(page.locator('.hud-card')).toHaveCount(6);
-
-    // Initial state: 532 nm, TiO2
-    await expect(page.locator('.hud-card').first()).toContainText('532');
-    await expect(page.locator('.hud-card').first()).toContainText('TiO2');
+    await expect(page.locator('.hud-grid')).toHaveCount(0);
+    await expect(page.locator('#demo-material-picker')).toBeHidden();
 
     // No severe unhandled runtime crashes
     expect(consoleErrors.filter(e => !e.includes('favicon'))).toHaveLength(0);
@@ -33,21 +28,19 @@ test.describe('Optical Metasurfaces Platform E2E Tests', () => {
   test('device selector switches modes and updates UI', async ({ page }) => {
     await page.goto('/');
 
-    // Click 'Deflector' tab
-    const deflectorBtn = page.locator('button[data-device="deflector"]');
+    const deflectorBtn = page.locator('button[data-preset="single-deflect"]');
     await deflectorBtn.click();
     await expect(deflectorBtn).toHaveClass(/active/);
+    await expect(page.locator('#demo-controls-deflector')).toBeVisible();
 
-    // Click 'Vortex (OAM)' tab
-    const vortexBtn = page.locator('button[data-device="vortex"]');
+    const vortexBtn = page.locator('button[data-preset="single-vortex"]');
     await vortexBtn.click();
     await expect(vortexBtn).toHaveClass(/active/);
-    await expect(deflectorBtn).not.toHaveClass(/active/);
+    await expect(page.locator('#demo-controls-vortex')).toBeVisible();
 
-    // Click 'Intensity |E|²' render mode
-    const intensityBtn = page.locator('button[data-render="intensity"]');
+    const intensityBtn = page.locator('#wavefield-card button[data-render="intensity"]');
     await intensityBtn.click();
-    await expect(intensityBtn).toHaveClass(/active/);
+    await expect(page.locator('button[data-render="intensity"][aria-selected="true"]')).toHaveCount(3);
 
     // Verify intensity panel and slider are visible in intensity modality
     const intensityPanel = page.locator('#wavefield-intensity-panel');
@@ -67,7 +60,7 @@ test.describe('Optical Metasurfaces Platform E2E Tests', () => {
     await expect(page.locator('#intensity-scale-max')).toHaveText('0.100');
 
     // Switch back to 'field' and verify panel is hidden
-    const fieldBtn = page.locator('button[data-render="field"]');
+    const fieldBtn = page.locator('#wavefield-card button[data-render="field"]');
     await fieldBtn.click();
     await expect(intensityPanel).toBeHidden();
   });

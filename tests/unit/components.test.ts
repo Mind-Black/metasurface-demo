@@ -74,11 +74,11 @@ describe('PerformanceHUD Metrics & Alarms', () => {
     hud = new PerformanceHUD(mockElement as unknown as HTMLElement);
   });
 
-  it('renders all 6 performance metric cards and standard OK status', () => {
+  it('renders all 6 performance metric cards without a feasibility claim', () => {
     hud.render();
     const cardMatches = mockElement.innerHTML.match(/class="hud-card"/g);
     expect(cardMatches?.length).toBe(6);
-    expect(mockElement.innerHTML).toContain('All nanofabrication & optical design criteria met');
+    expect(mockElement.innerHTML).not.toContain('All nanofabrication & optical design criteria met');
   });
 
   it('triggers critical pattern collapse alarm when height = 900 nm and min diameter = 80 nm (AR = 11.25 > 10)', () => {
@@ -190,6 +190,12 @@ describe('OpticsStore Reactive State Management', () => {
     expect(template).toContain('id="viewport-controls-panel"');
     expect(template).toContain('id="demo-slider-focal"');
     expect(template).toContain('id="demo-slider-diameter"');
+    expect(template).toContain('id="demo-slider-deflect-diam"');
+    expect(template).toContain('id="demo-slider-vortex-diam"');
+    expect(template).toContain('id="demo-slider-holo-diam"');
+    for (const id of ['diameter', 'deflect-diam', 'vortex-diam', 'holo-diam']) {
+      expect(template).toMatch(new RegExp(`id="demo-slider-${id}"[^>]*max="50"`));
+    }
     expect(template).toContain('id="demo-slider-wavelength"');
     expect(template).toContain('id="demo-controls-metalens"');
     expect(template).toContain('id="demo-controls-deflector"');
@@ -200,7 +206,9 @@ describe('OpticsStore Reactive State Management', () => {
     expect(template).toContain('data-demo-focal="38"');
     expect(template).toContain('data-demo-diam="30"');
     expect(template).toContain('data-demo-wl="532"');
-    expect(template).toContain('data-demo-mat="TiO2"');
+    expect(template).toContain('data-demo-mat="TiO2" disabled');
+    expect(template).toContain('data-demo-mat="Si" disabled');
+    expect(template).not.toContain('id="hud-root"');
   });
 
   it('DualViewport renders the physical spatial scale ruler and maintains constant XYZ spatial scale across demonstrations', () => {
@@ -235,6 +243,9 @@ describe('OpticsStore Reactive State Management', () => {
 
   it('DualViewport renders the XY profile panel and gradient combiner', () => {
     const template = DualViewport.getTemplate();
+    expect(template.match(/class="segmented-control viewport-render-mode"/g)).toHaveLength(2);
+    expect(template.match(/data-render="intensity"/g)).toHaveLength(3);
+    expect(template.match(/data-near-scale="log"/g)).toHaveLength(2);
     expect(template).toContain('id="xy-card"');
     expect(template).toContain('id="xy-profile-canvas"');
     expect(template).toContain('id="xy-probe-slider"');

@@ -21,6 +21,14 @@ function peakIndex(a: Float32Array): number {
 }
 
 describe('computeFarField', () => {
+  it('preserves the normalized complex field underlying the intensity', () => {
+    const result = computeFarField({ ...base, vortex: true }, 33, 0.25);
+    for (let i = 0; i < result.intensity.length; i++) {
+      expect(result.real[i] ** 2 + result.imaginary[i] ** 2).toBeCloseTo(result.intensity[i], 6);
+    }
+    expect(result.imaginary.some((value) => Math.abs(value) > 0.01)).toBe(true);
+  });
+
   it('flat aperture peaks at the centre of the pattern', () => {
     const r = computeFarField(base, 64, 0.25);
     const idx = peakIndex(r.intensity);

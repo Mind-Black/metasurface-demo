@@ -2081,3 +2081,242 @@ strong {
 }
 
 
+
+/* On phones, show one visualization at a time. */
+.mobile-viewport-tabs {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .mobile-viewport-tabs {
+    display: flex;
+    overflow-x: auto;
+    background: #070913;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .mobile-viewport-tabs button {
+    flex: 1 0 auto;
+    padding: 0.7rem 0.6rem;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .mobile-viewport-tabs button.active {
+    color: var(--accent-cyan);
+    border-bottom-color: var(--accent-cyan);
+  }
+
+  .split-viewports > .viewport-card:not(.mobile-active) {
+    display: none;
+  }
+
+  #xy-card.xy-inset-mode {
+    position: relative;
+    inset: auto;
+    width: auto;
+    height: auto;
+    border-radius: 0;
+    box-shadow: none;
+    animation: none;
+  }
+
+  #btn-toggle-xy-mode {
+    display: none;
+  }
+}
+
+/* View-specific controls stay alongside the visualization they affect. */
+.viewport-actions {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.75rem;
+  z-index: 12;
+}
+
+.viewport-render-mode {
+  position: absolute;
+  top: 2.8rem;
+  left: 0.75rem;
+  z-index: 12;
+}
+
+.viewport-render-mode .seg-btn {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.7rem;
+}
+
+#xy-card .viewport-render-mode {
+  top: auto;
+  bottom: 2.8rem;
+}
+
+#xy-card.xy-inset-mode .viewport-render-mode {
+  top: 2.8rem;
+  bottom: auto;
+}
+
+@media (max-width: 640px) {
+  .split-viewports:has(#lattice-card.mobile-active) .wavefield-intensity-panel,
+  .split-viewports:has(#farfield-card.mobile-active) .wavefield-intensity-panel {
+    display: none;
+  }
+
+  #xy-card.xy-inset-mode .viewport-render-mode {
+    top: auto;
+    bottom: 2.8rem;
+  }
+}
+
+.farfield-render-mode, .nearfield-scale-toggle {
+  position: absolute;
+  z-index: 12;
+}
+.farfield-render-mode {
+  top: 2.8rem;
+  left: 0.75rem;
+}
+.farfield-render-mode .seg-btn, .nearfield-scale-toggle .seg-btn {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.7rem;
+}
+.nearfield-scale-toggle {
+  top: 5rem;
+  left: 0.75rem;
+}
+#xy-card .nearfield-scale-toggle {
+  top: auto;
+  bottom: 5rem;
+}
+#xy-card.xy-inset-mode .nearfield-scale-toggle {
+  top: 5rem;
+  bottom: auto;
+}
+@media (max-width: 640px) {
+  #xy-card.xy-inset-mode .nearfield-scale-toggle {
+    top: auto;
+    bottom: 5rem;
+  }
+}
+
+/* Shared controls across the three field views. */
+#xy-card .viewport-render-mode,
+#xy-card.xy-inset-mode .viewport-render-mode,
+.farfield-render-mode {
+  top: 2.8rem;
+  bottom: auto;
+  left: 0.75rem;
+}
+#xy-card .nearfield-scale-toggle,
+#xy-card.xy-inset-mode .nearfield-scale-toggle,
+.farfield-scale-toggle {
+  top: 5rem;
+  bottom: auto;
+  left: 0.75rem;
+  right: auto;
+  z-index: 12;
+}
+.farfield-scale-toggle .seg-btn {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.7rem;
+}
+.viewport-zoom,
+.farfield-zoom-toggle {
+  position: absolute;
+  top: auto;
+  right: 0.75rem;
+  bottom: 0.65rem;
+  left: auto;
+  z-index: 12;
+  align-items: center;
+}
+.viewport-zoom .seg-btn {
+  padding: 0.3rem 0.45rem;
+  font-size: 0.7rem;
+}
+.viewport-zoom-label {
+  padding: 0 0.3rem;
+  color: var(--text-dim);
+  font-size: 0.65rem;
+}
+#xy-card:not(.xy-inset-mode) .xy-profile-controls-overlay {
+  top: 5rem;
+}
+@media (max-width: 640px) {
+  #xy-card.xy-inset-mode .viewport-render-mode { top: 2.8rem; bottom: auto; }
+  #xy-card.xy-inset-mode .nearfield-scale-toggle { top: 5rem; bottom: auto; }
+  #xy-card:not(.xy-inset-mode) .xy-profile-controls-overlay,
+  #xy-card.xy-inset-mode .xy-profile-controls-overlay {
+    top: 7.2rem;
+    right: 0.75rem;
+    bottom: auto;
+    left: auto;
+  }
+  .wavefield-intensity-panel { bottom: 3.4rem; }
+}
+
+/* Reserve space beneath the views for controls shared with the XY slice. */
+.viewport-control-dock {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  padding: 0.65rem 0.75rem;
+  background: #070913;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.viewport-control-dock .xy-profile-controls-overlay,
+.viewport-control-dock .wavefield-intensity-panel {
+  position: static;
+  transform: none;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  padding: 0.6rem 0.75rem;
+  box-shadow: none;
+}
+.viewport-control-dock .xy-probe-scrub-group {
+  flex: 1;
+  min-width: 0;
+}
+.viewport-control-dock .xy-probe-slider {
+  flex: 1;
+  width: auto;
+  min-width: 50px;
+}
+.viewport-control-dock .xy-controls-row {
+  gap: 0.6rem;
+}
+.viewport-control-dock .xy-quick-row {
+  justify-content: flex-start;
+}
+@media (max-width: 640px) {
+  .viewport-control-dock {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dual-viewport-root:has(#lattice-card.mobile-active) .viewport-control-dock {
+    display: none;
+  }
+  .dual-viewport-root:has(#wavefield-card.mobile-active) .viewport-control-dock .xy-profile-controls-overlay {
+    display: none;
+  }
+  .dual-viewport-root:has(#wavefield-card.mobile-active) .viewport-control-dock:not(:has(#wavefield-intensity-panel:not(.hidden))) {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .dual-viewport-root:has(#wavefield-card.mobile-active) #fft-intensity-panel,
+  .dual-viewport-root:has(#xy-card.mobile-active) #fft-intensity-panel,
+  .dual-viewport-root:has(#farfield-card.mobile-active) #xy-controls-overlay,
+  .dual-viewport-root:has(#farfield-card.mobile-active) #wavefield-intensity-panel {
+    display: none;
+  }
+  .dual-viewport-root:has(#farfield-card.mobile-active) .viewport-control-dock:not(:has(#fft-intensity-panel:not(.hidden))) {
+    display: none;
+  }
+}

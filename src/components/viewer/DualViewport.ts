@@ -1,10 +1,9 @@
-import { opticsStore, DeviceType, RenderMode, MaterialType, ActiveGradients } from '@/lib/store/useOpticsStore';
+import { opticsStore, DeviceType, RenderMode, ActiveGradients } from '@/lib/store/useOpticsStore';
 import { WavefieldRenderer } from './WavefieldCanvas';
 import { NanostructureLatticeViewer } from './NanostructureLattice';
 import { XYProfileRenderer } from './XYProfileCanvas';
 import { FarFieldRenderer } from './FarFieldCanvas';
-import { PerformanceHUD } from '../metrics/PerformanceHUD';
-import { getDemonstrationIntensityScale, formatIntensityValue, IntensityScaleRange, calculateDeflectionAngle } from '@/lib/optics/phaseProfiles';
+import { getDemonstrationIntensityScale, formatIntensityValue, IntensityScaleRange, calculateDeflectionAngle, calculateChromaticFocalShift } from '@/lib/optics/phaseProfiles';
 
 export class DualViewport {
   private container: HTMLElement;
@@ -12,7 +11,6 @@ export class DualViewport {
   private latticeViewer: NanostructureLatticeViewer | null = null;
   private xyRenderer: XYProfileRenderer | null = null;
   private farFieldRenderer: FarFieldRenderer | null = null;
-  private hud: PerformanceHUD | null = null;
   private unsubscribe: (() => void) | null = null;
 
   constructor(container: HTMLElement) {
@@ -30,50 +28,39 @@ export class DualViewport {
           <div class="toolbar-section">
             <span class="toolbar-title">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
-              Dual Viewport Visualizer
+              Metasurface Visualizer
             </span>
 
-            <!-- Device Selector -->
-            <div class="segmented-control" role="tablist" aria-label="Metasurface Device Mode">
-              <button class="seg-btn active" data-device="metalens" role="tab" aria-selected="true">Metalens</button>
-              <button class="seg-btn" data-device="deflector" role="tab" aria-selected="false">Deflector</button>
-              <button class="seg-btn" data-device="vortex" role="tab" aria-selected="false">Vortex (OAM)</button>
-              <button class="seg-btn" data-device="hologram" role="tab" aria-selected="false">Hologram</button>
-            </div>
           </div>
 
           <div class="toolbar-section">
-            <!-- 2D Render Mode Selector -->
-            <div class="segmented-control" role="tablist" aria-label="Field Render Mode">
-              <button class="seg-btn active" data-render="field" role="tab" aria-selected="true" title="Instantaneous Electric Field Re{E}">Wave Re{E}</button>
-              <button class="seg-btn" data-render="intensity" role="tab" aria-selected="false" title="Optical Intensity |E|²">Intensity |E|²</button>
-              <button class="seg-btn" data-render="phase" role="tab" aria-selected="false" title="Transmitted Phase arg(E)">Phase arg(E)</button>
-            </div>
-
             <!-- Action buttons -->
             <button class="icon-btn" id="btn-toggle-play" title="Play / Pause Animation" aria-label="Pause Animation">
               <svg id="icon-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
               <svg id="icon-play" class="hidden" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             </button>
 
-            <button class="icon-btn" id="btn-toggle-rays" title="Toggle Geometric Rays Overlay" aria-label="Toggle Rays">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/><path d="m20 16-4-4 4-4"/><path d="m4 8 4 4-4 4"/></svg>
-            </button>
-
-            <button class="icon-btn" id="btn-reset-cam" title="Reset 3D Camera" aria-label="Reset Camera">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-            </button>
           </div>
         </header>
+
+        <div class="mobile-viewport-tabs" role="tablist" aria-label="Visualization">
+          <button type="button" id="tab-lattice" role="tab" aria-selected="true" aria-controls="lattice-card" data-viewport-tab="lattice-card" class="active">Lattice</button>
+          <button type="button" id="tab-wavefield" role="tab" aria-selected="false" aria-controls="wavefield-card" data-viewport-tab="wavefield-card" tabindex="-1">Wavefield</button>
+          <button type="button" id="tab-xy" role="tab" aria-selected="false" aria-controls="xy-card" data-viewport-tab="xy-card" tabindex="-1">XY Profile</button>
+          <button type="button" id="tab-farfield" role="tab" aria-selected="false" aria-controls="farfield-card" data-viewport-tab="farfield-card" tabindex="-1">Far Field</button>
+        </div>
 
         <!-- Viewports Split Screen -->
         <div class="split-viewports">
           <!-- Left: 3D Nanostructure Lattice View -->
-          <div class="viewport-card" id="lattice-card">
+          <div class="viewport-card mobile-active" id="lattice-card">
             <div class="viewport-header-badge">
               <span class="badge-label">3D Nanostructure Lattice</span>
-              <span class="badge-info">32×32 array (p = 400 nm)</span>
+              <span class="badge-info">400 nm pitch · D = <span id="lattice-diameter">30.0</span> µm</span>
             </div>
+            <div class="viewport-actions"><button class="icon-btn" id="btn-reset-cam" title="Reset 3D Camera" aria-label="Reset Camera">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            </button></div>
             <div class="canvas-wrapper" id="lattice-container">
               <canvas id="lattice-canvas"></canvas>
             </div>
@@ -86,10 +73,21 @@ export class DualViewport {
               <span class="badge-info">Huygens–Fresnel diffraction</span>
             </div>
 
-            <!-- Physical Spatial Scale Ruler (Constant 10 µm) -->
-            <div class="wavefield-scale-ruler" id="wavefield-scale-ruler" title="Constant spatial scale: 10 µm">
+            <div class="viewport-actions"><button class="icon-btn" id="btn-toggle-rays" title="Toggle Geometric Rays Overlay" aria-label="Toggle Rays">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/><path d="m20 16-4-4 4-4"/><path d="m4 8 4 4-4 4"/></svg>
+            </button></div>
+            ${DualViewport.renderModeSelector('Wavefield')}
+
+            <div class="segmented-control viewport-zoom" role="group" aria-label="Wavefield zoom">
+              <span class="viewport-zoom-label">Zoom</span>
+              <button type="button" class="seg-btn active" data-xz-zoom="1" aria-pressed="true">1×</button>
+              <button type="button" class="seg-btn" data-xz-zoom="2" aria-pressed="false">2×</button>
+              <button type="button" class="seg-btn" data-xz-zoom="5" aria-pressed="false">5×</button>
+            </div>
+            <!-- Physical Spatial Scale Ruler -->
+            <div class="wavefield-scale-ruler" id="wavefield-scale-ruler" title="Wavefield spatial scale">
               <div class="scale-ruler-bar" id="scale-ruler-bar"></div>
-              <span class="scale-ruler-label">10 µm</span>
+              <span class="scale-ruler-label" id="wavefield-scale-label">10 µm</span>
             </div>
 
             <div class="canvas-wrapper" id="wavefield-container">
@@ -104,11 +102,61 @@ export class DualViewport {
               <span class="badge-info">Plane <span class="math-tex">z = </span><span id="xy-badge-z-val">25.0</span> µm</span>
             </div>
 
-            <!-- XY Profile Floating Overlay Controls -->
+            ${DualViewport.renderModeSelector('XY profile')}
+
+            <div class="segmented-control viewport-zoom" role="group" aria-label="XY profile zoom">
+              <span class="viewport-zoom-label">Zoom</span>
+              <button type="button" class="seg-btn active" data-xy-zoom="1" aria-pressed="true">1×</button>
+              <button type="button" class="seg-btn" data-xy-zoom="2" aria-pressed="false">2×</button>
+              <button type="button" class="seg-btn" data-xy-zoom="5" aria-pressed="false">5×</button>
+            </div>
+
+            <!-- Physical Spatial Scale Ruler for Transverse XY Profile -->
+            <div class="xy-scale-ruler" id="xy-scale-ruler" title="Transverse spatial scale">
+              <div class="xy-scale-ruler-bar" id="xy-scale-ruler-bar"></div>
+              <span class="xy-scale-ruler-label" id="xy-scale-ruler-label">10 µm</span>
+            </div>
+
+            <div class="canvas-wrapper" id="xy-container">
+              <canvas id="xy-profile-canvas"></canvas>
+            </div>
+          </div>
+          <!-- Panel 4: Far-field (Fourier transform of the aperture field) -->
+          <div class="viewport-card" id="farfield-card">
+            <div class="viewport-header-badge">
+              <span class="badge-label">Far-Field (Fourier Transform)</span>
+              <span class="badge-info" title="Fraunhofer far-field = 2D Fourier transform of the aperture field; sinθ = λ·f. Dashed circle: sinθ = 1 (propagating-wave limit).">FT{E} vs. sin θ</span>
+            </div>
+            <div class="segmented-control farfield-render-mode" role="tablist" aria-label="Far-field render mode">
+              <button type="button" class="seg-btn active" data-render="field" role="tab" aria-selected="true">Wave</button>
+              <button type="button" class="seg-btn" data-render="intensity" role="tab" aria-selected="false">Intensity</button>
+              <button type="button" class="seg-btn" data-render="phase" role="tab" aria-selected="false">Phase</button>
+            </div>
+            <div class="segmented-control farfield-scale-toggle hidden" role="tablist" aria-label="Far-field intensity scale">
+              <button class="seg-btn active" data-ff-scale="linear" role="tab" aria-selected="true">Linear</button>
+              <button class="seg-btn" data-ff-scale="log" role="tab" aria-selected="false">Log</button>
+            </div>
+            <div class="segmented-control viewport-zoom farfield-zoom-toggle" role="group" aria-label="Far-field angular range">
+              <span class="viewport-zoom-label">Zoom</span>
+              <button class="seg-btn active" aria-pressed="true" data-ff-zoom="1" title="Full range sin θ ∈ [-1, 1]">1×</button>
+              <button class="seg-btn" aria-pressed="false" data-ff-zoom="0.5" title="sin θ ∈ [-0.5, 0.5]">2×</button>
+              <button class="seg-btn" aria-pressed="false" data-ff-zoom="0.25" title="sin θ ∈ [-0.25, 0.25]">4×</button>
+              <button class="seg-btn" aria-pressed="false" data-ff-zoom="0.125" title="sin θ ∈ [-0.125, 0.125]">8×</button>
+              <button class="seg-btn" aria-pressed="false" data-ff-zoom="0.0625" title="sin θ ∈ [-0.0625, 0.0625]">16×</button>
+            </div>
+            <div class="canvas-wrapper" id="farfield-container">
+              <canvas id="farfield-canvas"></canvas>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="viewport-control-dock">
+            <!-- XY slice controls -->
             <div class="xy-profile-controls-overlay" id="xy-controls-overlay" role="region" aria-label="Transverse Slice Controls">
               <div class="xy-controls-row">
                 <div class="xy-probe-scrub-group">
-                  <label for="xy-probe-slider" class="xy-ctrl-label">Probe <span class="math-tex">z</span>:</label>
+                  <label for="xy-probe-slider" class="xy-ctrl-label">XY probe <span class="math-tex">z</span>:</label>
                   <input
                     type="range"
                     id="xy-probe-slider"
@@ -136,46 +184,8 @@ export class DualViewport {
                   <button type="button" class="xy-snap-chip active" data-snap-z="focal" title="Snap to Focal Plane (z = f)">z = f</button>
                   <button type="button" class="xy-snap-chip" data-snap-z="50" title="Snap to Far Field (z = 50 µm)">z = 50µm</button>
                 </div>
-                <div class="xy-zoom-chips">
-                  <span class="xy-zoom-label">Zoom:</span>
-                  <button type="button" class="xy-zoom-chip active" data-xy-zoom="1">1×</button>
-                  <button type="button" class="xy-zoom-chip" data-xy-zoom="2">2×</button>
-                  <button type="button" class="xy-zoom-chip" data-xy-zoom="5">5×</button>
-                </div>
               </div>
             </div>
-
-            <!-- Physical Spatial Scale Ruler for Transverse XY Profile -->
-            <div class="xy-scale-ruler" id="xy-scale-ruler" title="Transverse spatial scale">
-              <div class="xy-scale-ruler-bar" id="xy-scale-ruler-bar"></div>
-              <span class="xy-scale-ruler-label" id="xy-scale-ruler-label">10 µm</span>
-            </div>
-
-            <div class="canvas-wrapper" id="xy-container">
-              <canvas id="xy-profile-canvas"></canvas>
-            </div>
-          </div>
-          <!-- Panel 4: Far-field (Fourier transform of the aperture field) -->
-          <div class="viewport-card" id="farfield-card">
-            <div class="viewport-header-badge">
-              <span class="badge-label">Far-Field (Fourier Transform)</span>
-              <span class="badge-info" title="Fraunhofer far-field = 2D Fourier transform of the aperture field; sinθ = λ·f. Dashed circle: sinθ = 1 (propagating-wave limit).">|FT{E}|² vs. sin θ</span>
-            </div>
-            <div class="segmented-control farfield-scale-toggle" role="tablist" aria-label="Far-field intensity scale">
-              <button class="seg-btn active" data-ff-scale="log" role="tab" aria-selected="true">Log</button>
-              <button class="seg-btn" data-ff-scale="linear" role="tab" aria-selected="false">Linear</button>
-            </div>
-            <div class="segmented-control farfield-zoom-toggle" role="group" aria-label="Far-field angular range">
-              <button class="seg-btn active" data-ff-zoom="1" title="Full range sin θ ∈ [-1, 1]">1×</button>
-              <button class="seg-btn" data-ff-zoom="0.5" title="sin θ ∈ [-0.5, 0.5]">2×</button>
-              <button class="seg-btn" data-ff-zoom="0.25" title="sin θ ∈ [-0.25, 0.25]">4×</button>
-              <button class="seg-btn" data-ff-zoom="0.125" title="sin θ ∈ [-0.125, 0.125]">8×</button>
-              <button class="seg-btn" data-ff-zoom="0.0625" title="sin θ ∈ [-0.0625, 0.0625]">16×</button>
-            </div>
-            <div class="canvas-wrapper" id="farfield-container">
-              <canvas id="farfield-canvas"></canvas>
-            </div>
-          </div>
 
           <!-- Shared Intensity Max Display Slider (drives both XZ and XY views) -->
           <div class="wavefield-intensity-panel hidden" id="wavefield-intensity-panel" role="region" aria-label="Intensity Scale Controls (XZ and XY views)">
@@ -204,6 +214,19 @@ export class DualViewport {
               <span class="scale-min">0</span>
               <div class="inferno-gradient-bar"></div>
               <span class="scale-max" id="intensity-scale-max">4.61</span>
+            </div>
+          </div>
+          <div class="wavefield-intensity-panel fft-intensity-panel hidden" id="fft-intensity-panel" role="region" aria-label="Far-field intensity range">
+            <div class="intensity-panel-header">
+              <label class="intensity-label" for="fft-intensity-max">FFT intensity max (relative to peak)</label>
+              <span class="intensity-value-display" id="fft-intensity-value">1.00</span>
+            </div>
+            <div class="intensity-slider-row">
+              <input type="range" id="fft-intensity-max" class="intensity-range-slider" min="0.01" max="1" step="0.01" value="1" aria-label="Far-field maximum displayed intensity relative to peak" />
+            </div>
+            <div class="slider-ticks"><span>0.01</span><span>1.00</span></div>
+            <div class="intensity-scale-bar" title="Inferno colormap normalization [0, Max]">
+              <span class="scale-min">0</span><div class="inferno-gradient-bar"></div><span class="scale-max" id="fft-scale-max">1.00</span>
             </div>
           </div>
         </div>
@@ -264,6 +287,7 @@ export class DualViewport {
               <button type="button" class="gradient-preset-chip active" data-preset="single-lens">Metalens</button>
               <button type="button" class="gradient-preset-chip" data-preset="single-deflect">Deflector</button>
               <button type="button" class="gradient-preset-chip" data-preset="single-vortex">Vortex Singlet</button>
+              <button type="button" class="gradient-preset-chip" data-preset="single-hologram">Hologram</button>
               <button type="button" class="gradient-preset-chip" data-preset="offaxis-lens">Off-Axis Metalens (Lens + Deflect)</button>
               <button type="button" class="gradient-preset-chip" data-preset="focused-vortex">Focused Vortex (Lens + OAM)</button>
               <button type="button" class="gradient-preset-chip" data-preset="steered-vortex">Steered Vortex (Deflect + OAM)</button>
@@ -278,7 +302,7 @@ export class DualViewport {
               <div class="demo-control-group">
                 <div class="demo-control-label-row">
                   <label for="demo-slider-focal" class="demo-label">
-                    <span>Focal Length (<span class="math-tex">f</span>):</span>
+                    <span>Focal Length at Current Wavelength (<span class="math-tex">f</span>):</span>
                   </label>
                   <span id="demo-label-focal" class="demo-val">25.0 µm</span>
                 </div>
@@ -288,7 +312,7 @@ export class DualViewport {
                   class="demo-slider-input"
                   min="10"
                   max="45"
-                  step="0.5"
+                  step="any"
                   value="25"
                   aria-label="Demonstration Focal Length"
                 />
@@ -312,7 +336,7 @@ export class DualViewport {
                   id="demo-slider-diameter"
                   class="demo-slider-input"
                   min="15"
-                  max="45"
+                  max="50"
                   step="1"
                   value="30"
                   aria-label="Demonstration Aperture Diameter"
@@ -351,14 +375,14 @@ export class DualViewport {
               </div>
 
               <!-- Material Selector -->
-              <div class="demo-control-group">
+              <div class="demo-control-group hidden">
                 <div class="demo-control-label-row">
                   <span class="demo-label">Dielectric Material:</span>
                   <span id="demo-label-material" class="demo-val">TiO₂</span>
                 </div>
                 <div class="demo-btn-group" id="demo-material-picker">
-                  <button type="button" class="demo-toggle-btn active" data-demo-mat="TiO2">TiO₂ (Visible)</button>
-                  <button type="button" class="demo-toggle-btn" data-demo-mat="Si">Silicon (Si - NIR)</button>
+                  <button type="button" class="demo-toggle-btn active" data-demo-mat="TiO2" disabled>TiO₂ (Visible)</button>
+                  <button type="button" class="demo-toggle-btn" data-demo-mat="Si" disabled>Silicon (Si - NIR)</button>
                 </div>
                 <div class="demo-helper-note">
                   Refractive index <span class="math-tex">n \approx 2.4</span> for TiO₂, <span class="math-tex">n \approx 3.48</span> for Si
@@ -419,6 +443,17 @@ export class DualViewport {
 
               <div class="demo-control-group">
                 <div class="demo-control-label-row">
+                  <label for="demo-slider-deflect-diam" class="demo-label">
+                    <span>Aperture Diameter (<span class="math-tex">D</span>):</span>
+                  </label>
+                  <span id="demo-label-deflect-diam" class="demo-val">30.0 µm</span>
+                </div>
+                <input type="range" id="demo-slider-deflect-diam" class="demo-slider-input"
+                  min="15" max="50" step="1" value="30" aria-label="Demonstration Deflector Diameter" />
+              </div>
+
+              <div class="demo-control-group">
+                <div class="demo-control-label-row">
                   <label for="demo-slider-deflect-wl" class="demo-label">
                     <span>Wavelength (<span class="math-tex">\lambda</span>):</span>
                   </label>
@@ -475,7 +510,7 @@ export class DualViewport {
                   id="demo-slider-vortex-diam"
                   class="demo-slider-input"
                   min="15"
-                  max="45"
+                  max="50"
                   step="1"
                   value="30"
                   aria-label="Demonstration Vortex Diameter"
@@ -530,7 +565,7 @@ export class DualViewport {
                   id="demo-slider-holo-diam"
                   class="demo-slider-input"
                   min="15"
-                  max="45"
+                  max="50"
                   step="1"
                   value="30"
                   aria-label="Demonstration Hologram Diameter"
@@ -559,10 +594,21 @@ export class DualViewport {
           </div>
         </div>
 
-        <!-- HUD Performance Dashboard -->
-        <div id="hud-root"></div>
       </div>
     `;
+  }
+
+  private static renderModeSelector(view: string): string {
+    return `
+      <div class="segmented-control viewport-render-mode" role="tablist" aria-label="${view} render mode">
+        <button type="button" class="seg-btn active" data-render="field" role="tab" aria-selected="true" title="Instantaneous electric field">Wave</button>
+        <button type="button" class="seg-btn" data-render="intensity" role="tab" aria-selected="false" title="Optical intensity">Intensity</button>
+        <button type="button" class="seg-btn" data-render="phase" role="tab" aria-selected="false" title="Transmitted phase">Phase</button>
+      </div>
+      <div class="segmented-control nearfield-scale-toggle hidden" role="tablist" aria-label="${view} intensity scale (shared)" title="Log scale shows a 40 dB range">
+        <button type="button" class="seg-btn active" data-near-scale="linear" role="tab" aria-selected="true">Linear</button>
+        <button type="button" class="seg-btn" data-near-scale="log" role="tab" aria-selected="false">Log</button>
+      </div>`;
   }
 
   private render(): void {
@@ -590,8 +636,21 @@ export class DualViewport {
       zoomBtns.forEach((btn) => {
         btn.addEventListener('click', () => {
           this.farFieldRenderer?.setSinMax(parseFloat(btn.dataset.ffZoom || '1'));
-          zoomBtns.forEach((b) => b.classList.toggle('active', b === btn));
+          zoomBtns.forEach((b) => {
+            b.classList.toggle('active', b === btn);
+            b.setAttribute('aria-pressed', String(b === btn));
+          });
         });
+      });
+      const fftIntensity = this.container.querySelector<HTMLInputElement>('#fft-intensity-max');
+      fftIntensity?.addEventListener('input', () => {
+        const value = Number(fftIntensity.value);
+        this.farFieldRenderer?.setIntensityMax(value);
+        const display = value.toFixed(2);
+        const label = this.container.querySelector('#fft-intensity-value');
+        const max = this.container.querySelector('#fft-scale-max');
+        if (label) label.textContent = display;
+        if (max) max.textContent = display;
       });
       const ffBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-ff-scale]');
       ffBtns.forEach((btn) => {
@@ -610,11 +669,6 @@ export class DualViewport {
     const latticeCanvas = this.container.querySelector<HTMLCanvasElement>('#lattice-canvas');
     if (latticeContainer && latticeCanvas) {
       this.latticeViewer = new NanostructureLatticeViewer(latticeContainer, latticeCanvas);
-    }
-
-    const hudRoot = this.container.querySelector<HTMLElement>('#hud-root');
-    if (hudRoot) {
-      this.hud = new PerformanceHUD(hudRoot);
     }
 
     // Handle window resize
@@ -643,10 +697,12 @@ export class DualViewport {
     const h = wavefieldCanvas.clientHeight;
     if (w <= 0 || h <= 0) return;
     const aspect = w / Math.max(1, h);
-    const xMax = Math.max(30.0, 30.0 * aspect);
-    // 10 um in pixels: w * (10.0 / (2.0 * xMax))
-    const rulerPx = Math.round(w * (10.0 / (2.0 * xMax)));
-    rulerBar.style.width = `${rulerPx}px`;
+    const zoom = opticsStore.getState().wavefieldZoom || 1;
+    const xMax = Math.max(30.0, 30.0 * aspect) / zoom;
+    const scaleUm = zoom >= 5 ? 2 : (zoom >= 2 ? 5 : 10);
+    rulerBar.style.width = `${Math.round(w * scaleUm / (2.0 * xMax))}px`;
+    const label = this.container.querySelector('#wavefield-scale-label');
+    if (label) label.textContent = `${scaleUm} µm`;
   };
 
   private updateXyScaleRuler = (): void => {
@@ -666,21 +722,32 @@ export class DualViewport {
   };
 
   private attachEventListeners(): void {
-    // Device buttons
-    const deviceBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-device]');
-    deviceBtns.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const dev = btn.dataset.device as DeviceType;
-        opticsStore.getState().setDeviceType(dev);
-        deviceBtns.forEach((b) => {
-          b.classList.remove('active');
-          b.setAttribute('aria-selected', 'false');
-        });
-        btn.classList.add('active');
-        btn.setAttribute('aria-selected', 'true');
+    const viewportTabs = Array.from(this.container.querySelectorAll<HTMLButtonElement>('[data-viewport-tab]'));
+    const selectViewport = (selected: HTMLButtonElement): void => {
+      viewportTabs.forEach((tab) => {
+        const active = tab === selected;
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        const card = this.container.querySelector<HTMLElement>(`#${tab.dataset.viewportTab}`);
+        card?.classList.toggle('mobile-active', active);
+      });
+      this.handleResize();
+    };
+    viewportTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => selectViewport(tab));
+      tab.addEventListener('keydown', (event) => {
+        let next = index;
+        if (event.key === 'ArrowRight') next = (index + 1) % viewportTabs.length;
+        else if (event.key === 'ArrowLeft') next = (index + viewportTabs.length - 1) % viewportTabs.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = viewportTabs.length - 1;
+        else return;
+        event.preventDefault();
+        selectViewport(viewportTabs[next]);
+        viewportTabs[next].focus();
       });
     });
-
     // Render mode buttons
     const renderBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-render]');
     renderBtns.forEach((btn) => {
@@ -688,11 +755,18 @@ export class DualViewport {
         const mode = btn.dataset.render as RenderMode;
         opticsStore.getState().setRenderMode(mode);
         renderBtns.forEach((b) => {
-          b.classList.remove('active');
-          b.setAttribute('aria-selected', 'false');
+          const active = b.dataset.render === mode;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-selected', String(active));
         });
-        btn.classList.add('active');
-        btn.setAttribute('aria-selected', 'true');
+      });
+    });
+
+    const nearScaleBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-near-scale]');
+    const nearScaleControls = this.container.querySelectorAll<HTMLElement>('.nearfield-scale-toggle');
+    nearScaleBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        opticsStore.getState().setIntensityScale(btn.dataset.nearScale as 'linear' | 'log');
       });
     });
 
@@ -785,12 +859,20 @@ export class DualViewport {
         if (target === '0') {
           opticsStore.getState().setProbeZ(0.0);
         } else if (target === 'focal') {
-          opticsStore.getState().setProbeZ(opticsStore.getState().focalLength);
+          const state = opticsStore.getState();
+          const focal = calculateChromaticFocalShift(state.designWavelength, state.wavelength, state.focalLength).operationalFocalLength;
+          opticsStore.getState().setProbeZ(Math.min(60, focal));
         } else if (target === '50') {
           opticsStore.getState().setProbeZ(50.0);
         }
       });
     });
+
+    const xzZoomBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-xz-zoom]');
+    xzZoomBtns.forEach((btn) => btn.addEventListener('click', () => {
+      opticsStore.getState().setWavefieldZoom(Number(btn.dataset.xzZoom));
+      this.updateScaleRuler();
+    }));
 
     const zoomChips = this.container.querySelectorAll<HTMLButtonElement>('[data-xy-zoom]');
     zoomChips.forEach((chip) => {
@@ -825,7 +907,8 @@ export class DualViewport {
     demoFocalSlider?.addEventListener('input', () => {
       const f = parseFloat(demoFocalSlider.value);
       if (!isNaN(f)) {
-        opticsStore.getState().setFocalLength(f);
+        const state = opticsStore.getState();
+        state.setFocalLength(f * state.wavelength / state.designWavelength);
       }
     });
 
@@ -846,7 +929,8 @@ export class DualViewport {
     demoFocalChips.forEach((chip) => {
       chip.addEventListener('click', () => {
         const val = parseFloat(chip.dataset.demoFocal || '25');
-        opticsStore.getState().setFocalLength(val);
+        const state = opticsStore.getState();
+        state.setFocalLength(val * state.wavelength / state.designWavelength);
       });
     });
 
@@ -864,19 +948,11 @@ export class DualViewport {
       });
     });
 
-    demoMatBtns.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const mat = btn.dataset.demoMat as MaterialType;
-        if (mat) {
-          opticsStore.getState().setMaterial(mat);
-        }
-      });
-    });
-
     // Deflector controls
     const demoDeflectSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-deflection');
     const demoPeriodSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-period');
     const demoDeflectWlSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-deflect-wl');
+    const demoDeflectDiamSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-deflect-diam');
     const demoDegChips = this.container.querySelectorAll<HTMLButtonElement>('[data-demo-deg]');
 
     demoDeflectSlider?.addEventListener('input', () => {
@@ -909,6 +985,11 @@ export class DualViewport {
           }
         }
       }
+    });
+
+    demoDeflectDiamSlider?.addEventListener('input', () => {
+      const d = parseFloat(demoDeflectDiamSlider.value);
+      if (!isNaN(d)) opticsStore.getState().setDiameter(d);
     });
 
     demoDeflectWlSlider?.addEventListener('input', () => {
@@ -1017,6 +1098,9 @@ export class DualViewport {
     lastDemonstrationKey = `${initialStore.deviceType}_${initialStore.wavelength}_${initialStore.designWavelength}_${initialStore.focalLength}_${initialStore.diameter}_${initialStore.deflectionAngle}_${initialStore.topologicalCharge}_${Boolean(initialStore.cghPhaseMask)}`;
     applyScaleRange(currentScale, false);
     intensityPanel?.classList.toggle('hidden', initialStore.renderMode !== 'intensity');
+    this.container.querySelector('#fft-intensity-panel')?.classList.toggle('hidden', initialStore.renderMode !== 'intensity');
+    this.container.querySelector('.farfield-scale-toggle')?.classList.toggle('hidden', initialStore.renderMode !== 'intensity');
+    this.farFieldRenderer?.setMode(initialStore.renderMode);
 
     intensitySlider?.addEventListener('input', (e) => {
       const target = e.target as HTMLInputElement;
@@ -1047,20 +1131,24 @@ export class DualViewport {
 
     // Sync button active classes if store changed externally
     this.unsubscribe = opticsStore.subscribe((state) => {
-      deviceBtns.forEach((b) => {
-        const isMatch = b.dataset.device === state.deviceType;
-        b.classList.toggle('active', isMatch);
-        b.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+      nearScaleControls.forEach((control) => control.classList.toggle('hidden', state.renderMode !== 'intensity'));
+      this.container.querySelector('.farfield-scale-toggle')?.classList.toggle('hidden', state.renderMode !== 'intensity');
+      this.farFieldRenderer?.setMode(state.renderMode);
+      nearScaleBtns.forEach((btn) => {
+        const active = btn.dataset.nearScale === state.intensityScale;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', String(active));
       });
-      renderBtns.forEach((b) => {
-        const isMatch = b.dataset.render === state.renderMode;
-        b.classList.toggle('active', isMatch);
-        b.setAttribute('aria-selected', isMatch ? 'true' : 'false');
+      renderBtns.forEach((btn) => {
+        const active = btn.dataset.render === state.renderMode;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', String(active));
       });
 
       // Update visibility of the intensity slider when renderMode changes
       const isIntensity = state.renderMode === 'intensity';
       intensityPanel?.classList.toggle('hidden', !isIntensity);
+      this.container.querySelector('#fft-intensity-panel')?.classList.toggle('hidden', !isIntensity);
 
       // Active gradients resolution
       const ag = state.activeGradients || {
@@ -1126,6 +1214,7 @@ export class DualViewport {
       }
 
       // Sync Transverse XY Profile controls
+      const operationalFocal = calculateChromaticFocalShift(state.designWavelength, state.wavelength, state.focalLength).operationalFocalLength;
       const pZ = state.probeZ ?? 25.0;
       if (xyProbeSlider && document.activeElement !== xyProbeSlider) {
         xyProbeSlider.value = pZ.toFixed(1);
@@ -1137,15 +1226,24 @@ export class DualViewport {
         const target = chip.dataset.snapZ;
         let isSnapActive = false;
         if (target === '0') isSnapActive = Math.abs(pZ - 0.0) < 0.25;
-        else if (target === 'focal') isSnapActive = Math.abs(pZ - state.focalLength) < 0.25;
+        else if (target === 'focal') isSnapActive = Math.abs(pZ - operationalFocal) < 0.25;
         else if (target === '50') isSnapActive = Math.abs(pZ - 50.0) < 0.25;
         chip.classList.toggle('active', isSnapActive);
       });
 
       zoomChips.forEach((chip) => {
         const zoom = parseFloat(chip.dataset.xyZoom || '1');
-        chip.classList.toggle('active', Math.abs((state.xyZoom || 1.0) - zoom) < 0.05);
+        const active = Math.abs((state.xyZoom || 1.0) - zoom) < 0.05;
+        chip.classList.toggle('active', active);
+        chip.setAttribute('aria-pressed', String(active));
       });
+
+      xzZoomBtns.forEach((btn) => {
+        const active = Number(btn.dataset.xzZoom) === state.wavefieldZoom;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+      });
+      this.updateScaleRuler();
 
       const isInset = state.xyViewMode === 'inset';
       xyCard?.classList.toggle('xy-inset-mode', isInset);
@@ -1155,11 +1253,15 @@ export class DualViewport {
 
       // Sync Metalens controls
       const labelDemoFocal = this.container.querySelector('#demo-label-focal');
-      if (labelDemoFocal) labelDemoFocal.textContent = `${state.focalLength.toFixed(1)} µm`;
-      if (demoFocalSlider && document.activeElement !== demoFocalSlider) {
-        demoFocalSlider.value = state.focalLength.toString();
+      if (labelDemoFocal) labelDemoFocal.textContent = `${operationalFocal.toFixed(1)} µm`;
+      if (demoFocalSlider) {
+        demoFocalSlider.min = Math.min(10, operationalFocal).toString();
+        demoFocalSlider.max = Math.max(45, operationalFocal).toString();
+        if (document.activeElement !== demoFocalSlider) demoFocalSlider.value = operationalFocal.toString();
       }
 
+      const latticeDiameter = this.container.querySelector('#lattice-diameter');
+      if (latticeDiameter) latticeDiameter.textContent = state.diameter.toFixed(1);
       const labelDemoDiam = this.container.querySelector('#demo-label-diameter');
       if (labelDemoDiam) labelDemoDiam.textContent = `${state.diameter.toFixed(1)} µm`;
       if (demoDiamSlider && document.activeElement !== demoDiamSlider) {
@@ -1179,7 +1281,7 @@ export class DualViewport {
 
       demoFocalChips.forEach((chip) => {
         const val = parseFloat(chip.dataset.demoFocal || '0');
-        chip.classList.toggle('active', Math.abs(state.focalLength - val) < 0.2);
+        chip.classList.toggle('active', Math.abs(operationalFocal - val) < 0.2);
       });
 
       demoDiamChips.forEach((chip) => {
@@ -1193,6 +1295,12 @@ export class DualViewport {
       });
 
       // Sync Deflector controls
+      const labelDemoDeflectDiam = this.container.querySelector('#demo-label-deflect-diam');
+      if (labelDemoDeflectDiam) labelDemoDeflectDiam.textContent = `${state.diameter.toFixed(1)} µm`;
+      if (demoDeflectDiamSlider && document.activeElement !== demoDeflectDiamSlider) {
+        demoDeflectDiamSlider.value = state.diameter.toString();
+      }
+
       const deg = (state.deflectionAngle * 180) / Math.PI;
       const labelDemoDeflect = this.container.querySelector('#demo-label-deflection');
       if (labelDemoDeflect) labelDemoDeflect.textContent = `${deg >= 0 ? '+' : ''}${deg.toFixed(1)}°`;
@@ -1300,7 +1408,6 @@ export class DualViewport {
     this.xyRenderer?.destroy();
     this.farFieldRenderer?.destroy();
     this.latticeViewer?.destroy();
-    this.hud?.destroy();
   }
 }
 

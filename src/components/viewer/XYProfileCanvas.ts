@@ -25,6 +25,7 @@ uniform float uDeflectionAngle;  // in radians
 uniform float uTopologicalCharge;
 uniform float uToleranceJitter;  // manufacturing noise [0, 0.15]
 uniform int   uRenderMode;       // 0: Re{E(x,y,t)}, 1: Intensity |E|^2, 2: Phase arg(E)
+uniform int   uLogIntensity;
 uniform float uIntensityMax;     // Max intensity displayed on colormap
 uniform int   uEnableLens;       // 1 = active, 0 = inactive
 uniform int   uEnableDeflect;    // 1 = active, 0 = inactive
@@ -149,6 +150,7 @@ void main() {
     // Time-averaged Intensity
     float maxVal = max(0.001, uIntensityMax);
     float normI = clamp(intensity / maxVal, 0.0, 1.0);
+    if (uLogIntensity == 1) normI = clamp(1.0 + log(max(normI, 0.0001)) / (4.0 * log(10.0)), 0.0, 1.0);
     baseColor = inferno(normI);
   } else {
     // Transmitted Phase Angle arg(E)
@@ -245,7 +247,7 @@ export class XYProfileRenderer {
 
     const uniforms = [
       'uResolution', 'uTime', 'uWavelength', 'uDesignWavelength', 'uFocalLength', 'uDiameter',
-      'uDeflectionAngle', 'uTopologicalCharge', 'uToleranceJitter', 'uRenderMode', 'uIntensityMax',
+      'uDeflectionAngle', 'uTopologicalCharge', 'uToleranceJitter', 'uRenderMode', 'uLogIntensity', 'uIntensityMax',
       'uEnableLens', 'uEnableDeflect', 'uEnableVortex', 'uEnableHologram', 'uProbeZ', 'uXyZoom',
       'uShowGrid', 'uHologramPhase'
     ];
@@ -347,6 +349,7 @@ export class XYProfileRenderer {
     if (state.renderMode === 'intensity') renderModeInt = 1;
     else if (state.renderMode === 'phase') renderModeInt = 2;
     gl.uniform1i(this.uniformLocations.uRenderMode, renderModeInt);
+    gl.uniform1i(this.uniformLocations.uLogIntensity, state.intensityScale === 'log' ? 1 : 0);
     gl.uniform1f(this.uniformLocations.uIntensityMax, state.intensityMax ?? 6.0);
 
     // Update hologram phase array

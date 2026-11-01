@@ -138,12 +138,7 @@ export class PerformanceHUD {
               </div>
             ` : ''}
           </div>
-        ` : `
-          <div class="hud-status-ok">
-            <span class="status-indicator"></span>
-            <span>All nanofabrication & optical design criteria met. Feasible for EBL & DUV lithography.</span>
-          </div>
-        `}
+        ` : ''}
       </div>
     `;
   }

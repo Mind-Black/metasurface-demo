@@ -5,6 +5,20 @@ import { getMetalensTargetPhase, getBeamDeflectorPhase, getVortexBeamPhase, getP
 import { queryUnitCellLUT, targetPhaseToDiameter } from '@/lib/optics/rcwaLut';
 import { generateTargetBitmap, runGerchbergSaxton } from '@/lib/optics/gerchbergSaxton';
 
+export function latticePositions(diameter: number, pitch: number): Array<[number, number]> {
+  const radius = diameter / 2;
+  const limit = Math.floor(radius / pitch);
+  const positions: Array<[number, number]> = [];
+  for (let i = -limit; i <= limit; i++) {
+    for (let j = -limit; j <= limit; j++) {
+      const x = i * pitch;
+      const y = j * pitch;
+      if (x * x + y * y <= radius * radius) positions.push([x, y]);
+    }
+  }
+  return positions;
+}
+
 export class NanostructureLatticeViewer {
   private container: HTMLElement;
   private canvas: HTMLCanvasElement;
@@ -19,7 +33,7 @@ export class NanostructureLatticeViewer {
   private unsubscribe: (() => void) | null = null;
   private needsRender: boolean = true;
 
-  private readonly GRID_SIZE = 32;
+  private readonly MAX_GRID_SIZE = 127; // 50 µm aperture at 400 nm pitch
   private readonly PITCH = 0.4; // 400 nm in um
   private dummy = new THREE.Object3D();
   private color = new THREE.Color();
@@ -46,8 +60,8 @@ export class NanostructureLatticeViewer {
 
     // Camera
     const aspect = this.container.clientWidth / Math.max(1, this.container.clientHeight);
-    this.camera = new THREE.PerspectiveCamera(40, aspect, 0.1, 100);
-    this.camera.position.set(12, -14, 12);
+    this.camera = new THREE.PerspectiveCamera(40, aspect, 0.1, 300);
+    this.camera.position.set(47, -55, 47);
     this.camera.up.set(0, 0, 1); // Z is vertical
 
     // Controls
@@ -56,7 +70,7 @@ export class NanostructureLatticeViewer {
     this.controls.dampingFactor = 0.05;
     this.controls.maxPolarAngle = Math.PI / 2 + 0.1; // Don't flip below ground
     this.controls.minDistance = 5;
-    this.controls.maxDistance = 40;
+    this.controls.maxDistance = 170;
     this.controls.target.set(0, 0, 0.3);
     this.controls.addEventListener('change', () => {
       this.needsRender = true;
@@ -88,7 +102,7 @@ export class NanostructureLatticeViewer {
   }
 
   private setupSubstrate(): void {
-    const size = this.GRID_SIZE * this.PITCH;
+    const size = 30;
     const substrateGeom = new THREE.BoxGeometry(size * 1.15, size * 1.15, 0.5);
     const substrateMat = new THREE.MeshPhysicalMaterial({
       color: 0x94a3b8,
@@ -103,15 +117,11 @@ export class NanostructureLatticeViewer {
     this.substrate.position.set(0, 0, -0.25);
     this.scene.add(this.substrate);
 
-    // Subtle coordinate grid on substrate surface
-    const gridHelper = new THREE.GridHelper(size, this.GRID_SIZE, 0x38bdf8, 0x1e293b);
-    gridHelper.rotation.x = Math.PI / 2;
-    gridHelper.position.set(0, 0, 0.005);
-    this.scene.add(gridHelper);
+
   }
 
   private setupLatticeMeshes(): void {
-    const count = this.GRID_SIZE * this.GRID_SIZE;
+    const count = this.MAX_GRID_SIZE * this.MAX_GRID_SIZE;
 
     const mat = new THREE.MeshStandardMaterial({
       roughness: 0.25,
@@ -139,7 +149,9 @@ export class NanostructureLatticeViewer {
   public updateLattice(): void {
     if (!this.pillarMesh || !this.finMesh) return;
     const state = opticsStore.getState();
-    const halfWidth = (this.GRID_SIZE * this.PITCH) / 2;
+    const halfWidth = state.diameter / 2;
+    const markerScale = state.diameter / 30;
+    this.substrate?.scale.set(markerScale, markerScale, 1);
     const heightUm = state.heightNm / 1000.0;
     const wavelengthUm = state.wavelength;
     const wavelengthNm = state.wavelength * 1000.0;
@@ -167,10 +179,9 @@ export class NanostructureLatticeViewer {
     }
 
     let index = 0;
-    for (let i = 0; i < this.GRID_SIZE; i++) {
-      for (let j = 0; j < this.GRID_SIZE; j++) {
-        const x = -halfWidth + (i + 0.5) * this.PITCH;
-        const y = -halfWidth + (j + 0.5) * this.PITCH;
+    for (const [x, y] of latticePositions(state.diameter, this.PITCH)) {
+        const i = Math.round(x / this.PITCH);
+        const j = Math.round(y / this.PITCH);
 
         // Calculate multi-gradient superposition phase
         let phase = 0;
@@ -184,9 +195,11 @@ export class NanostructureLatticeViewer {
           phase += getVortexBeamPhase(x, y, state.topologicalCharge);
         }
         if (ag.hologram && hologramMask) {
-          phase += hologramMask[i][j];
+          const maskX = Math.min(hologramMask.length - 1, Math.max(0, Math.floor((x / state.diameter + 0.5) * hologramMask.length)));
+          const maskY = Math.min(hologramMask[maskX].length - 1, Math.max(0, Math.floor((y / state.diameter + 0.5) * hologramMask[maskX].length)));
+          phase += hologramMask[maskX][maskY];
         } else if (ag.hologram) {
-          const normDist = Math.sqrt(x * x + y * y) / (this.GRID_SIZE * this.PITCH * 0.5);
+          const normDist = Math.sqrt(x * x + y * y) / halfWidth;
           phase += (((Math.sin(normDist * 12.0) * 2.0 + Math.cos(x * 8.0)) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
         }
 
@@ -250,9 +263,10 @@ export class NanostructureLatticeViewer {
         }
 
         index++;
-      }
     }
 
+    targetMesh.count = index;
+    targetMesh.computeBoundingSphere();
     targetMesh.instanceMatrix.needsUpdate = true;
     if (targetMesh.instanceColor) {
       targetMesh.instanceColor.needsUpdate = true;
@@ -261,8 +275,8 @@ export class NanostructureLatticeViewer {
   }
 
   public resetCamera(): void {
-    this.camera.position.set(12, -14, 12);
     this.controls.target.set(0, 0, 0.3);
+    this.camera.position.set(47, -55, 47);
     this.controls.update();
     this.needsRender = true;
   }

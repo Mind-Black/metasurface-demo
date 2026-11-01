@@ -22,6 +22,8 @@ export interface FarFieldInput {
 export interface FarFieldResult {
   size: number;          // output grid is size x size, covering sinθ ∈ [-sinMax, sinMax]
   sinMax: number;
+  real: Float32Array;      // complex field normalized by peak amplitude
+  imaginary: Float32Array;
   intensity: Float32Array; // row-major, normalized so max = 1, row 0 = sinθy = +sinMax (top)
 }
 
@@ -116,6 +118,8 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
 
   // Step 2: transform along x: F[oy][ox] = Σ_ix T[oy][ix]·K_x[ox][ix]
   const out = new Float32Array(outSize * outSize);
+  const real = new Float32Array(out.length);
+  const imaginary = new Float32Array(out.length);
   let maxI = 0;
   for (let oy = 0; oy < outSize; oy++) {
     for (let ox = 0; ox < outSize; ox++) {
@@ -131,10 +135,19 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
       }
       const v = sr * sr + si * si;
       out[oy * outSize + ox] = v;
+      real[oy * outSize + ox] = sr;
+      imaginary[oy * outSize + ox] = si;
       if (v > maxI) maxI = v;
     }
   }
   // Normalized to the peak within the displayed window
-  if (maxI > 0) for (let i = 0; i < out.length; i++) out[i] /= maxI;
-  return { size: outSize, sinMax, intensity: out };
+  if (maxI > 0) {
+    const amplitude = Math.sqrt(maxI);
+    for (let i = 0; i < out.length; i++) {
+      out[i] /= maxI;
+      real[i] /= amplitude;
+      imaginary[i] /= amplitude;
+    }
+  }
+  return { size: outSize, sinMax, intensity: out, real, imaginary };
 }
