@@ -1,0 +1,140 @@
+/**
+ * Far-field (Fraunhofer) diffraction pattern of a metasurface aperture,
+ * computed as the 2D Fourier transform of the transmitted aperture field.
+ *
+ * Output axes are direction sines (sin θx, sin θy) = λ·(fx, fy).
+ */
+
+export interface FarFieldInput {
+  wavelength: number;        // operating wavelength [µm]
+  designWavelength: number;  // fabrication design wavelength [µm]
+  focalLength: number;       // [µm]
+  diameter: number;          // aperture diameter [µm]
+  deflectionAngle: number;   // [rad]
+  topologicalCharge: number;
+  lens: boolean;
+  deflect: boolean;
+  vortex: boolean;
+  hologram: boolean;
+  cghPhaseMask?: number[][] | null;
+}
+
+export interface FarFieldResult {
+  size: number;          // output grid is size x size, covering sinθ ∈ [-sinMax, sinMax]
+  sinMax: number;
+  intensity: Float32Array; // row-major, normalized so max = 1, row 0 = sinθy = +sinMax (top)
+}
+
+const PITCH = 0.2; // aperture sampling pitch [µm]
+
+/** Transmitted aperture phase at (x, y) µm, matching the XZ/XY wavefield models. */
+export function aperturePhase(p: FarFieldInput, x: number, y: number): number {
+  const radius = p.diameter * 0.5;
+  const kDesign = (2 * Math.PI) / Math.max(0.2, p.designWavelength);
+  let phase = 0;
+  if (p.lens) {
+    phase += -kDesign * (Math.sqrt(x * x + y * y + p.focalLength * p.focalLength) - p.focalLength);
+  }
+  if (p.deflect) phase += kDesign * Math.sin(p.deflectionAngle) * x;
+  if (p.vortex) phase += p.topologicalCharge * Math.atan2(y, x);
+  if (p.hologram && p.cghPhaseMask && p.cghPhaseMask.length > 0) {
+    const mask = p.cghPhaseMask;
+    const rows = mask.length;
+    const cols = mask[0].length;
+    const col = Math.min(cols - 1, Math.max(0, Math.floor((x / radius * 0.5 + 0.5) * cols)));
+    const row = Math.min(rows - 1, Math.max(0, Math.floor((y / radius * 0.5 + 0.5) * rows)));
+    phase += mask[row][col];
+  }
+  return phase;
+}
+
+/**
+ * Far-field = 2D Fourier transform of the sampled aperture field, evaluated directly
+ * on a window sinθ ∈ [-sinMax, sinMax]² (matrix Fourier transform). Because the
+ * transform kernel is separable this costs O(M·N² + M²·N) and gives exact angular
+ * resolution at any zoom, with no FFT zero-padding limits.
+ */
+export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): FarFieldResult {
+  const radius = p.diameter * 0.5;
+  const nAp = Math.max(8, Math.ceil(p.diameter / PITCH));
+  const step = p.diameter / nAp;
+  const k = (2 * Math.PI) / Math.max(0.05, p.wavelength);
+
+  // Aperture sample coordinates and field
+  const coord = new Float64Array(nAp);
+  for (let i = 0; i < nAp; i++) coord[i] = -radius + (i + 0.5) * step;
+  const eRe = new Float64Array(nAp * nAp); // [iy * nAp + ix]
+  const eIm = new Float64Array(nAp * nAp);
+  for (let iy = 0; iy < nAp; iy++) {
+    for (let ix = 0; ix < nAp; ix++) {
+      const x = coord[ix];
+      const y = coord[iy];
+      if (x * x + y * y > radius * radius) continue;
+      const ph = aperturePhase(p, x, y);
+      eRe[iy * nAp + ix] = Math.cos(ph);
+      eIm[iy * nAp + ix] = Math.sin(ph);
+    }
+  }
+
+  // Output sinθ axes (index 0 of y axis = +sinMax, i.e. top row)
+  const sx = new Float64Array(outSize);
+  const sy = new Float64Array(outSize);
+  for (let o = 0; o < outSize; o++) {
+    sx[o] = -sinMax + ((o + 0.5) / outSize) * 2 * sinMax;
+    sy[o] = sinMax - ((o + 0.5) / outSize) * 2 * sinMax;
+  }
+
+  // Kernel tables: exp(-i k s c) for every (output, aperture) pair
+  const kerRe = (s: Float64Array) => {
+    const out = new Float64Array(outSize * nAp);
+    for (let o = 0; o < outSize; o++) for (let i = 0; i < nAp; i++) out[o * nAp + i] = Math.cos(k * s[o] * coord[i]);
+    return out;
+  };
+  const kerIm = (s: Float64Array) => {
+    const out = new Float64Array(outSize * nAp);
+    for (let o = 0; o < outSize; o++) for (let i = 0; i < nAp; i++) out[o * nAp + i] = -Math.sin(k * s[o] * coord[i]);
+    return out;
+  };
+  const xRe = kerRe(sx), xIm = kerIm(sx);
+  const yRe = kerRe(sy), yIm = kerIm(sy);
+
+  // Step 1: transform along y for each aperture column: T[oy][ix] = Σ_iy E[iy][ix]·K_y[oy][iy]
+  const tRe = new Float64Array(outSize * nAp);
+  const tIm = new Float64Array(outSize * nAp);
+  for (let oy = 0; oy < outSize; oy++) {
+    for (let iy = 0; iy < nAp; iy++) {
+      const kr = yRe[oy * nAp + iy];
+      const ki = yIm[oy * nAp + iy];
+      for (let ix = 0; ix < nAp; ix++) {
+        const er = eRe[iy * nAp + ix];
+        const ei = eIm[iy * nAp + ix];
+        tRe[oy * nAp + ix] += er * kr - ei * ki;
+        tIm[oy * nAp + ix] += er * ki + ei * kr;
+      }
+    }
+  }
+
+  // Step 2: transform along x: F[oy][ox] = Σ_ix T[oy][ix]·K_x[ox][ix]
+  const out = new Float32Array(outSize * outSize);
+  let maxI = 0;
+  for (let oy = 0; oy < outSize; oy++) {
+    for (let ox = 0; ox < outSize; ox++) {
+      let sr = 0;
+      let si = 0;
+      for (let ix = 0; ix < nAp; ix++) {
+        const tr = tRe[oy * nAp + ix];
+        const ti = tIm[oy * nAp + ix];
+        const kr = xRe[ox * nAp + ix];
+        const ki = xIm[ox * nAp + ix];
+        sr += tr * kr - ti * ki;
+        si += tr * ki + ti * kr;
+      }
+      const v = sr * sr + si * si;
+      out[oy * outSize + ox] = v;
+      if (v > maxI) maxI = v;
+    }
+  }
+  // Normalized to the peak within the displayed window
+  if (maxI > 0) for (let i = 0; i < out.length; i++) out[i] /= maxI;
+  return { size: outSize, sinMax, intensity: out };
+}

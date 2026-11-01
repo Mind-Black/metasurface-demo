@@ -1,0 +1,28 @@
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+test-results*/
+playwright-report/
+*.log
+
+# Local settings and secrets
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local planning document and unused artwork
+/docs/NEW_metasurface_website_agent_prompt.md
+/public/surface.svg
+/public/optical-field.svg
+
+# Banked explanatory content, kept locally for a later release
+/src/components/modules/
+/tests/unit/narrative.test.ts
+
+# Temporary deployment audit
+/.deploy-audit/

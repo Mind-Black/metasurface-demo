@@ -1,0 +1,90 @@
+import { test, expect } from '@playwright/test';
+
+test.describe('Optical Metasurfaces Platform E2E Tests', () => {
+  test('loads home page and initializes dual viewport canvases', async ({ page }) => {
+    const consoleErrors: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') {
+        consoleErrors.push(msg.text());
+      }
+    });
+
+    await page.goto('/');
+
+    await expect(page.locator('.toolbar-title')).toContainText('Dual Viewport Visualizer');
+    await expect(page.locator('.narrative-module')).toHaveCount(0);
+
+    // Check dual viewport canvases
+    await expect(page.locator('#lattice-canvas')).toBeVisible();
+    await expect(page.locator('#wavefield-canvas')).toBeVisible();
+
+    // Check HUD performance dashboard
+    await expect(page.locator('.hud-grid')).toBeVisible();
+    await expect(page.locator('.hud-card')).toHaveCount(6);
+
+    // Initial state: 532 nm, TiO2
+    await expect(page.locator('.hud-card').first()).toContainText('532');
+    await expect(page.locator('.hud-card').first()).toContainText('TiO2');
+
+    // No severe unhandled runtime crashes
+    expect(consoleErrors.filter(e => !e.includes('favicon'))).toHaveLength(0);
+  });
+
+  test('device selector switches modes and updates UI', async ({ page }) => {
+    await page.goto('/');
+
+    // Click 'Deflector' tab
+    const deflectorBtn = page.locator('button[data-device="deflector"]');
+    await deflectorBtn.click();
+    await expect(deflectorBtn).toHaveClass(/active/);
+
+    // Click 'Vortex (OAM)' tab
+    const vortexBtn = page.locator('button[data-device="vortex"]');
+    await vortexBtn.click();
+    await expect(vortexBtn).toHaveClass(/active/);
+    await expect(deflectorBtn).not.toHaveClass(/active/);
+
+    // Click 'Intensity |E|²' render mode
+    const intensityBtn = page.locator('button[data-render="intensity"]');
+    await intensityBtn.click();
+    await expect(intensityBtn).toHaveClass(/active/);
+
+    // Verify intensity panel and slider are visible in intensity modality
+    const intensityPanel = page.locator('#wavefield-intensity-panel');
+    await expect(intensityPanel).toBeVisible();
+    const intensitySlider = page.locator('#slider-intensity-max');
+    await expect(intensitySlider).toBeVisible();
+
+    // Verify slider range is dynamically calibrated to low-intensity Vortex beam (max < 0.5)
+    const vortexMaxStr = await intensitySlider.getAttribute('max');
+    const vortexMax = parseFloat(vortexMaxStr || '1');
+    expect(vortexMax).toBeLessThan(0.5);
+
+    // Adjust max intensity value
+    await intensitySlider.fill('0.10');
+    await intensitySlider.dispatchEvent('input');
+    await expect(page.locator('#intensity-max-display')).toHaveText('0.100');
+    await expect(page.locator('#intensity-scale-max')).toHaveText('0.100');
+
+    // Switch back to 'field' and verify panel is hidden
+    const fieldBtn = page.locator('button[data-render="field"]');
+    await fieldBtn.click();
+    await expect(intensityPanel).toBeHidden();
+  });
+
+  test('demonstration sliders close to visualizer update focal length and diameter', async ({ page }) => {
+    await page.goto('/');
+
+    const demoFocalSlider = page.locator('#demo-slider-focal');
+    await expect(demoFocalSlider).toBeVisible();
+    await demoFocalSlider.fill('35');
+    await demoFocalSlider.dispatchEvent('input');
+
+    await expect(page.locator('#demo-label-focal')).toContainText('35.0 µm');
+
+    // Click short focal preset chip (f = 15 µm)
+    const chipShort = page.locator('button[data-demo-focal="15"]');
+    await chipShort.click();
+    await expect(page.locator('#demo-label-focal')).toContainText('15.0 µm');
+  });
+});
