@@ -10,8 +10,8 @@ export interface UnitCellResponse {
 }
 
 /**
- * Parametric Rigorous Coupled-Wave Analysis (RCWA) look-up table model
- * for circular dielectric nanopillars on an SiO2 substrate (n_sub = 1.45).
+ * Analytic effective-index surrogate for circular dielectric nanopillars.
+ * This is not an RCWA solver or a measured/simulated unit-cell library.
  */
 export function queryUnitCellLUT(
   diameterNm: number,
@@ -35,7 +35,7 @@ export function queryUnitCellLUT(
     warning = `Inter-pillar gap (${gap.toFixed(0)} nm) below critical lithography resolution (< 40 nm)`;
   }
 
-  // Waveguide mode effective index model calibrated against RCWA
+  // Approximate effective index from the dielectric fill fraction.
   const mat: MaterialDispersion = material === 'TiO2' ? TiO2_Dispersion : Silicon_Dispersion;
   const { n, k } = mat.getRefractiveIndex(wavelengthNm);
   const nSub = 1.45; // Fused silica substrate
@@ -56,7 +56,8 @@ export function queryUnitCellLUT(
   const tMax = (1 - r1 * r1) * (1 - r2 * r2);
   const denom = Math.max(0.01, 1 + (r1 * r2) ** 2 - 2 * r1 * r2 * Math.cos(roundTripPhase));
   const internalLoss = Math.exp(-2 * k0 * k * (heightNm * 1e-9));
-  const transmission = Math.min(1.0, Math.max(0.05, (tMax / denom) * internalLoss));
+  // Fresnel products and Beer-Lambert loss above are power factors.
+  const transmission = Math.sqrt(Math.min(1.0, Math.max(0, (tMax / denom) * internalLoss)));
 
   return {
     phase: wrappedPhase,
@@ -69,8 +70,9 @@ export function queryUnitCellLUT(
 }
 
 /**
- * Inverse LUT map: finds the nanopillar diameter in [80, 350] nm that best achieves
- * the target phase shift phi in [0, 2pi) for given parameters.
+ * Invert the same effective-index model used by queryUnitCellLUT.
+ * Consider all 2π branches in the fabrication interval; if the desired phase
+ * is outside its coverage, return the endpoint with least circular phase error.
  */
 export function targetPhaseToDiameter(
   targetPhase: number,
@@ -79,9 +81,37 @@ export function targetPhaseToDiameter(
   pitchNm: number = 400,
   material: 'TiO2' | 'Si' = 'TiO2'
 ): number {
-  const normPhase = (((targetPhase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (2 * Math.PI);
-  // Linear initialization across feasible diameter span [80, 340] nm
-  const minD = 80;
+  const tau = 2 * Math.PI;
+  const phase = ((targetPhase % tau) + tau) % tau;
+  const minD = Math.max(80, heightNm / 10);
   const maxD = Math.min(340, pitchNm - 40);
-  return minD + normPhase * (maxD - minD);
+  if (maxD < minD) throw new RangeError('No feasible nanopillar diameter for this height and pitch.');
+  const mat = material === 'TiO2' ? TiO2_Dispersion : Silicon_Dispersion;
+  const { n } = mat.getRefractiveIndex(wavelengthNm);
+  const coefficient = Math.PI * (n * n - 1) / (4 * pitchNm * pitchNm);
+  const scale = tau * heightNm / wavelengthNm;
+  const rawPhase = (diameter: number) => scale * (Math.sqrt(1 + coefficient * diameter * diameter) - 1);
+  const minPhase = rawPhase(minD);
+  const maxPhase = rawPhase(maxD);
+  const candidates = [minD, maxD];
+  if (coefficient > 0 && scale > 0) {
+    for (let branch = Math.ceil((minPhase - phase) / tau); branch <= Math.floor((maxPhase - phase) / tau); branch++) {
+      const effectiveIndex = 1 + (phase + branch * tau) / scale;
+      const diameter = Math.sqrt((effectiveIndex * effectiveIndex - 1) / coefficient);
+      candidates.push(Math.max(minD, Math.min(maxD, diameter)));
+    }
+  }
+  let best = minD;
+  let bestError = Infinity;
+  let bestTransmission = -1;
+  for (const diameter of candidates) {
+    const response = queryUnitCellLUT(diameter, wavelengthNm, heightNm, pitchNm, material);
+    const error = Math.abs(Math.atan2(Math.sin(response.phase - phase), Math.cos(response.phase - phase)));
+    if (error < bestError - 1e-10 || (Math.abs(error - bestError) <= 1e-10 && response.transmission > bestTransmission)) {
+      best = diameter;
+      bestError = error;
+      bestTransmission = response.transmission;
+    }
+  }
+  return best;
 }

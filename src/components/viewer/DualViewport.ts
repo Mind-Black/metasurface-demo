@@ -1,4 +1,4 @@
-import { opticsStore, DeviceType, RenderMode, ActiveGradients } from '@/lib/store/useOpticsStore';
+import { opticsStore, DeviceType, RenderMode, ActiveGradients, MAX_HOLOGRAM_ITERATIONS } from '@/lib/store/useOpticsStore';
 import { WavefieldRenderer } from './WavefieldCanvas';
 import { NanostructureLatticeViewer } from './NanostructureLattice';
 import { XYProfileRenderer } from './XYProfileCanvas';
@@ -63,6 +63,12 @@ export class DualViewport {
             </button></div>
             <div class="canvas-wrapper" id="lattice-container">
               <canvas id="lattice-canvas"></canvas>
+              <div class="lattice-phase-inset" aria-label="Lattice phase map">
+                <span>Phase map</span>
+                <canvas id="lattice-phase-map" width="128" height="128" role="img" aria-label="Ideal design phase across the circular aperture, from 0 to 2 pi"></canvas>
+                <div class="lattice-phase-scale"><span>0</span><span>Phase</span><span>2π</span></div>
+                <span class="lattice-phase-axes">+y ↑ · +x →</span>
+              </div>
             </div>
           </div>
 
@@ -125,7 +131,7 @@ export class DualViewport {
           <div class="viewport-card" id="farfield-card">
             <div class="viewport-header-badge">
               <span class="badge-label">Far-Field (Fourier Transform)</span>
-              <span class="badge-info" title="Fraunhofer far-field = 2D Fourier transform of the aperture field; sinθ = λ·f. Dashed circle: sinθ = 1 (propagating-wave limit).">FT{E} vs. sin θ</span>
+              <span class="badge-info" title="Fraunhofer far-field of the ideal aperture = 2D Fourier transform; sinθ = λ·f. Dashed circle: sinθ = 1.">FT{E} vs. sin θ</span>
             </div>
             <div class="segmented-control farfield-render-mode" role="tablist" aria-label="Far-field render mode">
               <button type="button" class="seg-btn active" data-render="field" role="tab" aria-selected="true">Wave</button>
@@ -295,6 +301,61 @@ export class DualViewport {
             </div>
           </div>
 
+          <div class="demo-all-controls">
+          <!-- Shared optical parameters -->
+          <div class="demo-mode-panel" id="demo-controls-shared">
+            <div class="demo-controls-grid">
+              <div class="demo-control-group">
+                <div class="demo-control-label-row">
+                  <label for="demo-slider-diameter" class="demo-label">
+                    <span>Aperture Diameter (<span class="math-tex">D</span>):</span>
+                  </label>
+                  <span id="demo-label-diameter" class="demo-val">30.0 µm</span>
+                </div>
+                <input
+                  type="range"
+                  id="demo-slider-diameter"
+                  class="demo-slider-input"
+                  min="15"
+                  max="50"
+                  step="1"
+                  value="30"
+                  aria-label="Demonstration Aperture Diameter"
+                />
+                <div class="demo-presets-row">
+                  <button type="button" class="demo-chip" data-demo-diam="20">D = 20 µm</button>
+                  <button type="button" class="demo-chip active" data-demo-diam="30">D = 30 µm</button>
+                  <button type="button" class="demo-chip" data-demo-diam="40">D = 40 µm</button>
+                </div>
+              </div>
+
+              <div class="demo-control-group">
+                <div class="demo-control-label-row">
+                  <label for="demo-slider-wavelength" class="demo-label">
+                    <span>Wavelength (<span class="math-tex">\lambda</span>):</span>
+                  </label>
+                  <span id="demo-label-wavelength" class="demo-val">532 nm</span>
+                </div>
+                <input
+                  type="range"
+                  id="demo-slider-wavelength"
+                  class="demo-slider-input"
+                  min="400"
+                  max="1550"
+                  step="10"
+                  value="532"
+                  aria-label="Demonstration Wavelength"
+                />
+                <div class="demo-presets-row">
+                  <button type="button" class="demo-chip chip-wl-blue" data-demo-wl="400">400nm (Blue)</button>
+                  <button type="button" class="demo-chip chip-wl-green active" data-demo-wl="532">532nm (Green)</button>
+                  <button type="button" class="demo-chip chip-wl-red" data-demo-wl="650">650nm (Red)</button>
+                  <button type="button" class="demo-chip chip-wl-nir" data-demo-wl="1550">1550nm (NIR)</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 1. Metalens Mode Controls -->
           <div class="demo-mode-panel" id="demo-controls-metalens">
             <div class="demo-controls-grid">
@@ -323,56 +384,6 @@ export class DualViewport {
                 </div>
               </div>
 
-              <!-- Aperture Diameter Slider -->
-              <div class="demo-control-group">
-                <div class="demo-control-label-row">
-                  <label for="demo-slider-diameter" class="demo-label">
-                    <span>Aperture Diameter (<span class="math-tex">D</span>):</span>
-                  </label>
-                  <span id="demo-label-diameter" class="demo-val">30.0 µm</span>
-                </div>
-                <input
-                  type="range"
-                  id="demo-slider-diameter"
-                  class="demo-slider-input"
-                  min="15"
-                  max="50"
-                  step="1"
-                  value="30"
-                  aria-label="Demonstration Aperture Diameter"
-                />
-                <div class="demo-presets-row">
-                  <button type="button" class="demo-chip" data-demo-diam="20">D = 20 µm</button>
-                  <button type="button" class="demo-chip active" data-demo-diam="30">D = 30 µm</button>
-                  <button type="button" class="demo-chip" data-demo-diam="40">D = 40 µm</button>
-                </div>
-              </div>
-
-              <!-- Wavelength Slider -->
-              <div class="demo-control-group">
-                <div class="demo-control-label-row">
-                  <label for="demo-slider-wavelength" class="demo-label">
-                    <span>Wavelength (<span class="math-tex">\lambda</span>):</span>
-                  </label>
-                  <span id="demo-label-wavelength" class="demo-val">532 nm</span>
-                </div>
-                <input
-                  type="range"
-                  id="demo-slider-wavelength"
-                  class="demo-slider-input"
-                  min="400"
-                  max="1550"
-                  step="10"
-                  value="532"
-                  aria-label="Demonstration Wavelength"
-                />
-                <div class="demo-presets-row">
-                  <button type="button" class="demo-chip chip-wl-blue" data-demo-wl="400">400nm (Blue)</button>
-                  <button type="button" class="demo-chip chip-wl-green active" data-demo-wl="532">532nm (Green)</button>
-                  <button type="button" class="demo-chip chip-wl-red" data-demo-wl="650">650nm (Red)</button>
-                  <button type="button" class="demo-chip chip-wl-nir" data-demo-wl="1550">1550nm (NIR)</button>
-                </div>
-              </div>
 
               <!-- Material Selector -->
               <div class="demo-control-group hidden">
@@ -441,41 +452,6 @@ export class DualViewport {
                 </div>
               </div>
 
-              <div class="demo-control-group">
-                <div class="demo-control-label-row">
-                  <label for="demo-slider-deflect-diam" class="demo-label">
-                    <span>Aperture Diameter (<span class="math-tex">D</span>):</span>
-                  </label>
-                  <span id="demo-label-deflect-diam" class="demo-val">30.0 µm</span>
-                </div>
-                <input type="range" id="demo-slider-deflect-diam" class="demo-slider-input"
-                  min="15" max="50" step="1" value="30" aria-label="Demonstration Deflector Diameter" />
-              </div>
-
-              <div class="demo-control-group">
-                <div class="demo-control-label-row">
-                  <label for="demo-slider-deflect-wl" class="demo-label">
-                    <span>Wavelength (<span class="math-tex">\lambda</span>):</span>
-                  </label>
-                  <span id="demo-label-deflect-wl" class="demo-val">532 nm</span>
-                </div>
-                <input
-                  type="range"
-                  id="demo-slider-deflect-wl"
-                  class="demo-slider-input"
-                  min="400"
-                  max="1550"
-                  step="10"
-                  value="532"
-                  aria-label="Demonstration Deflector Wavelength"
-                />
-                <div class="demo-presets-row">
-                  <button type="button" class="demo-chip chip-wl-blue" data-demo-wl="400">400nm</button>
-                  <button type="button" class="demo-chip chip-wl-green active" data-demo-wl="532">532nm</button>
-                  <button type="button" class="demo-chip chip-wl-red" data-demo-wl="650">650nm</button>
-                  <button type="button" class="demo-chip chip-wl-nir" data-demo-wl="1550">1550nm</button>
-                </div>
-              </div>
             </div>
           </div>
 
@@ -484,9 +460,10 @@ export class DualViewport {
             <div class="demo-controls-grid">
               <div class="demo-control-group">
                 <div class="demo-control-label-row">
-                  <span class="demo-label">Topological Charge (<span class="math-tex">\ell</span>):</span>
+                  <label for="demo-slider-charge" class="demo-label">Topological Charge (<span class="math-tex">\ell</span>):</label>
                   <span id="demo-label-charge" class="demo-val">ℓ = +1</span>
                 </div>
+                <input type="range" id="demo-slider-charge" class="demo-slider-input" min="-10" max="10" step="1" value="1" aria-label="Topological charge" />
                 <div class="demo-btn-group" id="demo-charge-selector">
                   <button type="button" class="demo-toggle-btn" data-demo-charge="-2">ℓ = -2</button>
                   <button type="button" class="demo-toggle-btn" data-demo-charge="-1">ℓ = -1</button>
@@ -498,43 +475,6 @@ export class DualViewport {
                 </div>
               </div>
 
-              <div class="demo-control-group">
-                <div class="demo-control-label-row">
-                  <label for="demo-slider-vortex-diam" class="demo-label">
-                    <span>Aperture Diameter (<span class="math-tex">D</span>):</span>
-                  </label>
-                  <span id="demo-label-vortex-diam" class="demo-val">30.0 µm</span>
-                </div>
-                <input
-                  type="range"
-                  id="demo-slider-vortex-diam"
-                  class="demo-slider-input"
-                  min="15"
-                  max="50"
-                  step="1"
-                  value="30"
-                  aria-label="Demonstration Vortex Diameter"
-                />
-              </div>
-
-              <div class="demo-control-group">
-                <div class="demo-control-label-row">
-                  <label for="demo-slider-vortex-wl" class="demo-label">
-                    <span>Wavelength (<span class="math-tex">\lambda</span>):</span>
-                  </label>
-                  <span id="demo-label-vortex-wl" class="demo-val">532 nm</span>
-                </div>
-                <input
-                  type="range"
-                  id="demo-slider-vortex-wl"
-                  class="demo-slider-input"
-                  min="400"
-                  max="1550"
-                  step="10"
-                  value="532"
-                  aria-label="Demonstration Vortex Wavelength"
-                />
-              </div>
             </div>
           </div>
 
@@ -547,50 +487,22 @@ export class DualViewport {
                   <span id="demo-label-holo-target" class="demo-val">Optics Crest</span>
                 </div>
                 <div class="demo-btn-group" id="demo-hologram-targets">
-                  <button type="button" class="demo-toggle-btn active" data-demo-cgh="crest">Optics Crest</button>
-                  <button type="button" class="demo-toggle-btn" data-demo-cgh="smiley">Diffraction Smiley</button>
-                  <button type="button" class="demo-toggle-btn" data-demo-cgh="mu">Micro-Mu (µ)</button>
+                  <button type="button" class="demo-toggle-btn active" data-demo-cgh="crest" aria-pressed="true">Optics Crest</button>
+                  <button type="button" class="demo-toggle-btn" data-demo-cgh="smiley" aria-pressed="false">Diffraction Smiley</button>
+                  <button type="button" class="demo-toggle-btn" data-demo-cgh="mu" aria-pressed="false">Micro-Mu (µ)</button>
                 </div>
+                <div class="demo-helper-note">View the reconstructed pattern in Far Field → Intensity. The XY and wavefield panels show propagation near the surface.</div>
               </div>
-
               <div class="demo-control-group">
                 <div class="demo-control-label-row">
-                  <label for="demo-slider-holo-diam" class="demo-label">
-                    <span>Aperture Diameter (<span class="math-tex">D</span>):</span>
-                  </label>
-                  <span id="demo-label-holo-diam" class="demo-val">30.0 µm</span>
+                  <label for="demo-slider-holo-iterations" class="demo-label">Gerchberg–Saxton iterations:</label>
+                  <span id="demo-label-holo-iterations" class="demo-val">15</span>
                 </div>
-                <input
-                  type="range"
-                  id="demo-slider-holo-diam"
-                  class="demo-slider-input"
-                  min="15"
-                  max="50"
-                  step="1"
-                  value="30"
-                  aria-label="Demonstration Hologram Diameter"
-                />
+                <input type="range" id="demo-slider-holo-iterations" class="demo-slider-input" min="1" max="${MAX_HOLOGRAM_ITERATIONS}" step="1" value="15">
               </div>
 
-              <div class="demo-control-group">
-                <div class="demo-control-label-row">
-                  <label for="demo-slider-holo-wl" class="demo-label">
-                    <span>Wavelength (<span class="math-tex">\lambda</span>):</span>
-                  </label>
-                  <span id="demo-label-holo-wl" class="demo-val">532 nm</span>
-                </div>
-                <input
-                  type="range"
-                  id="demo-slider-holo-wl"
-                  class="demo-slider-input"
-                  min="400"
-                  max="1550"
-                  step="10"
-                  value="532"
-                  aria-label="Demonstration Hologram Wavelength"
-                />
-              </div>
             </div>
+          </div>
           </div>
         </div>
 
@@ -951,8 +863,6 @@ export class DualViewport {
     // Deflector controls
     const demoDeflectSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-deflection');
     const demoPeriodSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-period');
-    const demoDeflectWlSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-deflect-wl');
-    const demoDeflectDiamSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-deflect-diam');
     const demoDegChips = this.container.querySelectorAll<HTMLButtonElement>('[data-demo-deg]');
 
     demoDeflectSlider?.addEventListener('input', () => {
@@ -987,18 +897,6 @@ export class DualViewport {
       }
     });
 
-    demoDeflectDiamSlider?.addEventListener('input', () => {
-      const d = parseFloat(demoDeflectDiamSlider.value);
-      if (!isNaN(d)) opticsStore.getState().setDiameter(d);
-    });
-
-    demoDeflectWlSlider?.addEventListener('input', () => {
-      const nm = parseFloat(demoDeflectWlSlider.value);
-      if (!isNaN(nm)) {
-        opticsStore.getState().setWavelength(nm / 1000.0);
-      }
-    });
-
     demoDegChips.forEach((chip) => {
       chip.addEventListener('click', () => {
         const deg = parseFloat(chip.dataset.demoDeg || '20');
@@ -1008,9 +906,11 @@ export class DualViewport {
     });
 
     // Vortex controls
+    const demoChargeSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-charge');
     const demoChargeBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-demo-charge]');
-    const demoVortexDiamSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-vortex-diam');
-    const demoVortexWlSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-vortex-wl');
+    demoChargeSlider?.addEventListener('input', () => {
+      opticsStore.getState().setTopologicalCharge(Number(demoChargeSlider.value));
+    });
 
     demoChargeBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -1019,36 +919,22 @@ export class DualViewport {
       });
     });
 
-    demoVortexDiamSlider?.addEventListener('input', () => {
-      const d = parseFloat(demoVortexDiamSlider.value);
-      if (!isNaN(d)) opticsStore.getState().setDiameter(d);
-    });
-
-    demoVortexWlSlider?.addEventListener('input', () => {
-      const nm = parseFloat(demoVortexWlSlider.value);
-      if (!isNaN(nm)) opticsStore.getState().setWavelength(nm / 1000.0);
-    });
-
     // Hologram controls
     const demoCghBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-demo-cgh]');
-    const demoHoloDiamSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-holo-diam');
-    const demoHoloWlSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-holo-wl');
+    const demoHoloIterations = this.container.querySelector<HTMLInputElement>('#demo-slider-holo-iterations');
+    demoHoloIterations?.addEventListener('input', () => {
+      const label = this.container.querySelector('#demo-label-holo-iterations');
+      if (label) label.textContent = demoHoloIterations.value;
+    });
+    demoHoloIterations?.addEventListener('change', () => {
+      opticsStore.getState().setHologramIterations(Number(demoHoloIterations.value));
+    });
 
     demoCghBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
         const target = btn.dataset.demoCgh as 'crest' | 'smiley' | 'mu';
         if (target) opticsStore.getState().setHologramTarget(target);
       });
-    });
-
-    demoHoloDiamSlider?.addEventListener('input', () => {
-      const d = parseFloat(demoHoloDiamSlider.value);
-      if (!isNaN(d)) opticsStore.getState().setDiameter(d);
-    });
-
-    demoHoloWlSlider?.addEventListener('input', () => {
-      const nm = parseFloat(demoHoloWlSlider.value);
-      if (!isNaN(nm)) opticsStore.getState().setWavelength(nm / 1000.0);
     });
 
     // Intensity modality max value slider controls
@@ -1295,11 +1181,6 @@ export class DualViewport {
       });
 
       // Sync Deflector controls
-      const labelDemoDeflectDiam = this.container.querySelector('#demo-label-deflect-diam');
-      if (labelDemoDeflectDiam) labelDemoDeflectDiam.textContent = `${state.diameter.toFixed(1)} µm`;
-      if (demoDeflectDiamSlider && document.activeElement !== demoDeflectDiamSlider) {
-        demoDeflectDiamSlider.value = state.diameter.toString();
-      }
 
       const deg = (state.deflectionAngle * 180) / Math.PI;
       const labelDemoDeflect = this.container.querySelector('#demo-label-deflection');
@@ -1316,11 +1197,6 @@ export class DualViewport {
         demoPeriodSlider.value = periodUm.toFixed(2);
       }
 
-      const labelDemoDeflectWl = this.container.querySelector('#demo-label-deflect-wl');
-      if (labelDemoDeflectWl) labelDemoDeflectWl.textContent = `${wlNm.toFixed(0)} nm`;
-      if (demoDeflectWlSlider && document.activeElement !== demoDeflectWlSlider) {
-        demoDeflectWlSlider.value = wlNm.toString();
-      }
 
       demoDegChips.forEach((chip) => {
         const val = parseFloat(chip.dataset.demoDeg || '0');
@@ -1329,48 +1205,34 @@ export class DualViewport {
 
       // Sync Vortex controls
       const labelDemoCharge = this.container.querySelector('#demo-label-charge');
-      if (labelDemoCharge) labelDemoCharge.textContent = `ℓ = ${state.topologicalCharge >= 0 ? '+' : ''}${state.topologicalCharge}`;
+      if (labelDemoCharge) labelDemoCharge.textContent = `ℓ = ${state.topologicalCharge > 0 ? '+' : ''}${state.topologicalCharge}`;
+      if (demoChargeSlider && document.activeElement !== demoChargeSlider) demoChargeSlider.value = state.topologicalCharge.toString();
       demoChargeBtns.forEach((b) => {
         const val = parseInt(b.dataset.demoCharge || '0', 10);
         b.classList.toggle('active', val === state.topologicalCharge);
       });
 
-      const labelDemoVortexDiam = this.container.querySelector('#demo-label-vortex-diam');
-      if (labelDemoVortexDiam) labelDemoVortexDiam.textContent = `${state.diameter.toFixed(1)} µm`;
-      if (demoVortexDiamSlider && document.activeElement !== demoVortexDiamSlider) {
-        demoVortexDiamSlider.value = state.diameter.toString();
-      }
 
-      const labelDemoVortexWl = this.container.querySelector('#demo-label-vortex-wl');
-      if (labelDemoVortexWl) labelDemoVortexWl.textContent = `${wlNm.toFixed(0)} nm`;
-      if (demoVortexWlSlider && document.activeElement !== demoVortexWlSlider) {
-        demoVortexWlSlider.value = wlNm.toString();
-      }
 
       // Sync Hologram controls
       demoCghBtns.forEach((b) => {
-        b.classList.toggle('active', b.dataset.demoCgh === state.hologramTarget);
+        const selected = b.dataset.demoCgh === state.hologramTarget;
+        b.classList.toggle('active', selected);
+        b.setAttribute('aria-pressed', String(selected));
       });
+      if (demoHoloIterations) demoHoloIterations.value = String(state.hologramIterations);
+      const iterationLabel = this.container.querySelector('#demo-label-holo-iterations');
+      if (iterationLabel) iterationLabel.textContent = String(state.hologramIterations);
       const labelDemoHoloTarget = this.container.querySelector('#demo-label-holo-target');
       if (labelDemoHoloTarget) {
         const targetNames: Record<string, string> = { crest: 'Optics Crest', smiley: 'Diffraction Smiley', mu: 'Micro-Mu (µ)' };
         labelDemoHoloTarget.textContent = targetNames[state.hologramTarget] || 'Target Pattern';
       }
 
-      const labelDemoHoloDiam = this.container.querySelector('#demo-label-holo-diam');
-      if (labelDemoHoloDiam) labelDemoHoloDiam.textContent = `${state.diameter.toFixed(1)} µm`;
-      if (demoHoloDiamSlider && document.activeElement !== demoHoloDiamSlider) {
-        demoHoloDiamSlider.value = state.diameter.toString();
-      }
 
-      const labelDemoHoloWl = this.container.querySelector('#demo-label-holo-wl');
-      if (labelDemoHoloWl) labelDemoHoloWl.textContent = `${wlNm.toFixed(0)} nm`;
-      if (demoHoloWlSlider && document.activeElement !== demoHoloWlSlider) {
-        demoHoloWlSlider.value = wlNm.toString();
-      }
 
       // Check if demonstration or optical parameters changed
-      const demonstrationKey = `${state.deviceType}_${ag.lens}_${ag.deflect}_${ag.vortex}_${ag.hologram}_${state.wavelength}_${state.designWavelength}_${state.focalLength}_${state.diameter}_${state.deflectionAngle}_${state.topologicalCharge}_${Boolean(state.cghPhaseMask)}`;
+      const demonstrationKey = `${state.deviceType}_${ag.lens}_${ag.deflect}_${ag.vortex}_${ag.hologram}_${state.wavelength}_${state.designWavelength}_${state.focalLength}_${state.diameter}_${state.deflectionAngle}_${state.topologicalCharge}_${state.hologramTarget}_${state.hologramIterations}_${Boolean(state.cghPhaseMask)}`;
       if (demonstrationKey !== lastDemonstrationKey) {
         lastDemonstrationKey = demonstrationKey;
         const deviceChanged = lastDeviceType !== state.deviceType;

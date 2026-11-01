@@ -1,4 +1,5 @@
 import { opticsStore, OpticsState, RenderMode } from '@/lib/store/useOpticsStore';
+import { HologramTexture } from './HologramTexture';
 
 const VS_SOURCE = `#version 300 es
 in vec2 aPosition;
@@ -23,7 +24,6 @@ uniform float uFocalLength;      // design focal length in micrometers
 uniform float uDiameter;         // aperture diameter in micrometers
 uniform float uDeflectionAngle;  // in radians
 uniform float uTopologicalCharge;
-uniform float uToleranceJitter;  // manufacturing noise [0, 0.15]
 uniform int   uRenderMode;       // 0: Re{E(x,y,t)}, 1: Intensity |E|^2, 2: Phase arg(E)
 uniform int   uLogIntensity;
 uniform float uIntensityMax;     // Max intensity displayed on colormap
@@ -34,7 +34,7 @@ uniform int   uEnableHologram;   // 1 = active, 0 = inactive
 uniform float uProbeZ;           // Transverse slice Z coordinate in micrometers
 uniform float uXyZoom;           // 1.0 = +/-25 um, 2.0 = +/-12.5 um, 5.0 = +/-5.0 um
 uniform int   uShowGrid;         // 1 = show coordinate crosshairs & rings, 0 = hide
-uniform float uHologramPhase[128];
+uniform highp sampler2D uHologramPhase;
 
 const float PI = 3.14159265358979323846;
 const int NUM_VOGEL = 160;
@@ -70,13 +70,27 @@ void main() {
   vec2 eFieldTotal = vec2(0.0);
   float zDist = max(0.02, uProbeZ);
 
-  // Vogel / Fermat Fibonacci spiral aperture discretization
-  for (int i = 0; i < NUM_VOGEL; i++) {
+  // Holography needs every retrieved phase cell; sparse spiral sampling aliases
+  // the random-looking mask. Other modes retain the smooth pupil preview.
+  ivec2 maskSize = textureSize(uHologramPhase, 0);
+  int count = uEnableHologram == 1 ? maskSize.x * maskSize.y : NUM_VOGEL;
+  float activeCount = 0.0;
+  for (int i = 0; i < count; i++) {
     float rNorm = sqrt((float(i) + 0.5) / float(NUM_VOGEL));
     float rAp = rNorm * radius;
     float phiAp = float(i) * GOLDEN_ANGLE;
     float xAp = rAp * cos(phiAp);
     float yAp = rAp * sin(phiAp);
+    if (uEnableHologram == 1) {
+      vec2 cell = (vec2(float(i % maskSize.x), float(i / maskSize.x)) + 0.5) / vec2(maskSize);
+      xAp = (cell.x - 0.5) * uDiameter;
+      yAp = (cell.y - 0.5) * uDiameter;
+      rAp = length(vec2(xAp, yAp));
+      if (rAp > radius) continue;
+      rNorm = rAp / radius;
+      phiAp = atan(yAp, xAp);
+    }
+    activeCount += 1.0;
 
     // Multi-gradient phase superposition
     float targetPhase = 0.0;
@@ -90,13 +104,8 @@ void main() {
       targetPhase += uTopologicalCharge * phiAp;
     }
     if (uEnableHologram == 1) {
-      int hIdx = clamp(int((xAp / radius * 0.5 + 0.5) * 127.0), 0, 127);
-      targetPhase += uHologramPhase[hIdx];
+      targetPhase += texture(uHologramPhase, vec2(xAp, yAp) / uDiameter + 0.5).r;
     }
-
-    // Manufacturing tolerance noise
-    float hash = fract(sin(float(i) * 12.9898 + 4.12) * 43758.5453);
-    targetPhase += (hash - 0.5) * uToleranceJitter * 2.0 * PI;
 
     float dx = x - xAp;
     float dy = y - yAp;
@@ -105,11 +114,11 @@ void main() {
 
     // Huygens-Fresnel obliquity factor K(theta) = (1 + cos(theta)) / 2 = (1 + z/dist) / 2
     float obliquity = 0.5 * (1.0 + zDist / dist);
-    // Amplitude calibrated to the same field units as the XZ cross-section (1/sqrt(dist)),
-    // so the shared intensity max slider/colormap range applies equally to both views.
-    float amp = obliquity / sqrt(dist);
+    // A 2D hologram pupil radiates spherical waves. The smooth device previews
+    // retain their existing display normalization.
+    float amp = obliquity / (uEnableHologram == 1 ? dist : sqrt(dist));
 
-    if (uEnableVortex == 1 && abs(uTopologicalCharge) > 0.01) {
+    if (uEnableHologram == 0 && uEnableVortex == 1 && abs(uTopologicalCharge) > 0.01) {
       amp *= (0.2 + 0.8 * rNorm);
     }
 
@@ -118,10 +127,10 @@ void main() {
     eFieldTotal.y += amp * sin(totalPhase);
   }
 
-  eFieldTotal /= sqrt(float(NUM_VOGEL));
+  eFieldTotal /= sqrt(max(1.0, activeCount));
 
   // Optical vortex core phase singularity enforcement at beam axis
-  if (uEnableVortex == 1 && abs(uTopologicalCharge) > 0.01) {
+  if (uEnableHologram == 0 && uEnableVortex == 1 && abs(uTopologicalCharge) > 0.01) {
     float xCenter = 0.0;
     if (uEnableDeflect == 1) {
       float sinDeflect = (uWavelength / uDesignWavelength) * sin(uDeflectionAngle);
@@ -142,7 +151,8 @@ void main() {
   vec3 baseColor = vec3(0.0);
   if (uRenderMode == 0) {
     // Instantaneous Real Field
-    float val = clamp(instantaneousField * 0.7, -1.0, 1.0);
+    float fieldScale = uEnableHologram == 1 ? inversesqrt(max(0.001, uIntensityMax)) : 1.0;
+    float val = clamp(instantaneousField * fieldScale * 0.7, -1.0, 1.0);
     baseColor = val > 0.0
       ? mix(vec3(0.04, 0.05, 0.09), vec3(0.12, 0.85, 1.0), val)
       : mix(vec3(0.04, 0.05, 0.09), vec3(1.0, 0.2, 0.45), -val);
@@ -186,8 +196,10 @@ export class XYProfileRenderer {
   private animFrameId: number | null = null;
   private startTime: number = performance.now();
   private currentTime: number = 0;
+  private lastHologramFrame = 0;
+  private lastRenderedState: OpticsState | null = null;
   private showGrid: boolean = true;
-  private hologramPhaseArray = new Float32Array(128);
+  private hologramTexture: HologramTexture | null = null;
 
   private uniformLocations: Record<string, WebGLUniformLocation | null> = {};
 
@@ -206,6 +218,7 @@ export class XYProfileRenderer {
       return;
     }
     this.gl = gl;
+    this.hologramTexture = new HologramTexture(gl);
 
     const vs = this.compileShader(gl.VERTEX_SHADER, VS_SOURCE);
     const fs = this.compileShader(gl.FRAGMENT_SHADER, FS_SOURCE);
@@ -247,7 +260,7 @@ export class XYProfileRenderer {
 
     const uniforms = [
       'uResolution', 'uTime', 'uWavelength', 'uDesignWavelength', 'uFocalLength', 'uDiameter',
-      'uDeflectionAngle', 'uTopologicalCharge', 'uToleranceJitter', 'uRenderMode', 'uLogIntensity', 'uIntensityMax',
+      'uDeflectionAngle', 'uTopologicalCharge', 'uRenderMode', 'uLogIntensity', 'uIntensityMax',
       'uEnableLens', 'uEnableDeflect', 'uEnableVortex', 'uEnableHologram', 'uProbeZ', 'uXyZoom',
       'uShowGrid', 'uHologramPhase'
     ];
@@ -272,7 +285,10 @@ export class XYProfileRenderer {
 
   public resize(): void {
     if (!this.gl) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const isHologram = opticsStore.getState().activeGradients.hologram;
+    const dpr = isHologram
+      ? Math.min(window.devicePixelRatio || 1, 320 / Math.max(1, this.canvas.clientWidth, this.canvas.clientHeight))
+      : Math.min(window.devicePixelRatio || 1, 2);
     const displayWidth = Math.floor(this.canvas.clientWidth * dpr);
     const displayHeight = Math.floor(this.canvas.clientHeight * dpr);
     if (this.canvas.width !== displayWidth || this.canvas.height !== displayHeight) {
@@ -306,6 +322,11 @@ export class XYProfileRenderer {
   public render(timestamp?: number): void {
     if (!this.gl || !this.program || !this.vao) return;
     const state = opticsStore.getState();
+    if (state.activeGradients.hologram && timestamp !== undefined) {
+      if (state === this.lastRenderedState && timestamp - this.lastHologramFrame < 100) return;
+      this.lastHologramFrame = timestamp;
+    }
+    this.lastRenderedState = state;
 
     if (state.isPlaying && timestamp !== undefined) {
       this.currentTime = (timestamp - this.startTime) * 0.001;
@@ -327,7 +348,6 @@ export class XYProfileRenderer {
     gl.uniform1f(this.uniformLocations.uDiameter, state.diameter);
     gl.uniform1f(this.uniformLocations.uDeflectionAngle, state.deflectionAngle);
     gl.uniform1f(this.uniformLocations.uTopologicalCharge, state.topologicalCharge);
-    gl.uniform1f(this.uniformLocations.uToleranceJitter, state.toleranceJitter);
 
     // Multi-gradient superposition flags
     const ag = state.activeGradients || {
@@ -352,31 +372,14 @@ export class XYProfileRenderer {
     gl.uniform1i(this.uniformLocations.uLogIntensity, state.intensityScale === 'log' ? 1 : 0);
     gl.uniform1f(this.uniformLocations.uIntensityMax, state.intensityMax ?? 6.0);
 
-    // Update hologram phase array
-    if (ag.hologram && state.cghPhaseMask) {
-      const mask = state.cghPhaseMask;
-      const maskRows = mask.length;
-      const maskCols = mask[0].length;
-      const midRow = Math.floor(maskRows / 2);
-      for (let i = 0; i < 128; i++) {
-        const colIdx = Math.min(maskCols - 1, Math.floor((i / 128) * maskCols));
-        this.hologramPhaseArray[i] = mask[midRow][colIdx];
-      }
-    } else {
-      for (let i = 0; i < 128; i++) {
-        const norm = i / 128;
-        this.hologramPhaseArray[i] = (((Math.sin(norm * 18.8495) * 1.5 + Math.cos(norm * 37.699)) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-      }
-    }
-    if (this.uniformLocations.uHologramPhase) {
-      gl.uniform1fv(this.uniformLocations.uHologramPhase, this.hologramPhaseArray);
-    }
+    this.hologramTexture?.bind(state.cghPhaseMask, this.uniformLocations.uHologramPhase);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
   public destroy(): void {
     this.stop();
+    this.hologramTexture?.dispose();
     if (this.gl && this.program) {
       this.gl.deleteProgram(this.program);
     }

@@ -1,3 +1,5 @@
+import { generateTargetBitmap, runGerchbergSaxton } from '@/lib/optics/gerchbergSaxton';
+export const MAX_HOLOGRAM_ITERATIONS = 500;
 export type DeviceType = 'metalens' | 'deflector' | 'vortex' | 'hologram';
 export type MaterialType = 'TiO2' | 'Si';
 export type RenderMode = 'field' | 'intensity' | 'phase';
@@ -16,7 +18,7 @@ export interface OpticsState {
   focalLength: number;      // in micrometers (e.g. 25.0)
   diameter: number;         // in micrometers (e.g. 30.0)
   deflectionAngle: number;  // in radians (e.g. 0.35 ~20 degrees)
-  topologicalCharge: number;// integer (-3 to +3)
+  topologicalCharge: number;// integer (UI range: -10 to +10)
   deviceType: DeviceType;
   material: MaterialType;
 
@@ -32,10 +34,9 @@ export interface OpticsState {
   // Polarization (Stokes Vector: S0, S1, S2, S3)
   stokes: [number, number, number, number];
 
-  // Nanofabrication & Tolerances
+  // Nominal pillar geometry
   pitchNm: number;          // unit cell period (e.g. 400 nm)
   heightNm: number;         // structure height (e.g. 600 nm)
-  toleranceJitter: number;  // dimensional random error [0.0 - 0.15]
 
   // Rendering State
   renderMode: RenderMode;
@@ -56,7 +57,6 @@ export interface OpticsState {
   setDeviceType: (val: DeviceType) => void;
   setDeflectionAngle: (val: number) => void;
   setTopologicalCharge: (val: number) => void;
-  setToleranceJitter: (val: number) => void;
   setMaterial: (val: MaterialType) => void;
   setRenderMode: (val: RenderMode) => void;
   setIntensityScale: (val: 'linear' | 'log') => void;
@@ -105,7 +105,6 @@ class OpticsStore {
       stokes: [1, 0, 0, 1], // Right Circular Polarization (RCP)
       pitchNm: 400,
       heightNm: 600,
-      toleranceJitter: 0.02,
       renderMode: 'field',
       intensityScale: 'linear',
       isPlaying: true,
@@ -151,7 +150,6 @@ class OpticsStore {
       setXyViewMode: (xyViewMode) => this.update({ xyViewMode }),
       setDeflectionAngle: (deflectionAngle) => this.update({ deflectionAngle }),
       setTopologicalCharge: (topologicalCharge) => this.update({ topologicalCharge }),
-      setToleranceJitter: (toleranceJitter) => this.update({ toleranceJitter }),
       setMaterial: (material) => {
         const designWl = material === 'Si' ? 1.55 : 0.532;
         this.update({ material, designWavelength: designWl });
@@ -164,8 +162,17 @@ class OpticsStore {
       setPitchNm: (pitchNm) => this.update({ pitchNm }),
       setHeightNm: (heightNm) => this.update({ heightNm }),
       setHologramTarget: (hologramTarget) => this.update({ hologramTarget }),
-      setHologramIterations: (hologramIterations) => this.update({ hologramIterations }),
-      setCghPhaseMask: (cghPhaseMask) => this.update({ cghPhaseMask }),
+      setHologramIterations: (value) => {
+        if (Number.isFinite(value)) this.update({ hologramIterations: Math.max(1, Math.min(MAX_HOLOGRAM_ITERATIONS, Math.round(value))) });
+      },
+      setCghPhaseMask: (mask) => {
+        if (!mask.length || !mask[0].length || mask.some((row) => row.length !== mask[0].length || row.some((phase) => !Number.isFinite(phase)))) {
+          throw new RangeError('A hologram phase mask must be a nonempty rectangular array of finite phases.');
+        }
+        // Own a fresh snapshot so CPU and GPU caches observe replacements,
+        // including callers that reuse and edit their input array.
+        this.update({ cghPhaseMask: mask.map((row) => row.map((phase) => ((phase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI))) });
+      },
     };
   }
 
@@ -174,7 +181,20 @@ class OpticsStore {
   }
 
   public update(partial: Partial<OpticsState>): void {
-    this.state = { ...this.state, ...partial };
+    const next = { ...this.state, ...partial };
+    // Publish a complete optical state once. Renderers must never generate masks
+    // while notifying subscribers, which used to leave other views one update behind.
+    if (next.activeGradients.hologram && (!next.cghPhaseMask ||
+      next.hologramTarget !== this.state.hologramTarget ||
+      next.hologramIterations !== this.state.hologramIterations)) {
+      next.cghPhaseMask = runGerchbergSaxton(
+        generateTargetBitmap(next.hologramTarget), next.hologramIterations
+      ).phaseMask;
+    } else if (!next.activeGradients.hologram &&
+      (next.hologramTarget !== this.state.hologramTarget || next.hologramIterations !== this.state.hologramIterations)) {
+      next.cghPhaseMask = null;
+    }
+    this.state = next;
     this.notify();
   }
 

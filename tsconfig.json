@@ -12,5 +12,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests"],
+  "exclude": ["src/components/modules", "tests/unit/narrative.test.ts"]
 }

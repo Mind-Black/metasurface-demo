@@ -1,9 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { opticsStore, OpticsState } from '@/lib/store/useOpticsStore';
-import { getMetalensTargetPhase, getBeamDeflectorPhase, getVortexBeamPhase, getPBRotationAngle } from '@/lib/optics/phaseProfiles';
-import { queryUnitCellLUT, targetPhaseToDiameter } from '@/lib/optics/rcwaLut';
-import { generateTargetBitmap, runGerchbergSaxton } from '@/lib/optics/gerchbergSaxton';
+import { targetPhaseToDiameter } from '@/lib/optics/rcwaLut';
+import { aperturePhase } from '@/lib/optics/farField';
 
 export function latticePositions(diameter: number, pitch: number): Array<[number, number]> {
   const radius = diameter / 2;
@@ -19,6 +18,24 @@ export function latticePositions(diameter: number, pitch: number): Array<[number
   return positions;
 }
 
+export function latticeTargetPhase(state: OpticsState, x: number, y: number): number {
+  const phase = aperturePhase({ ...state, ...state.activeGradients }, x, y);
+  return ((phase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+}
+
+/** Geometry is designed at λ0; changing the illumination must not resize it. */
+export function latticePillarGeometry(state: OpticsState, x: number, y: number) {
+  const targetPhase = latticeTargetPhase(state, x, y);
+  const diameterNm = targetPhaseToDiameter(targetPhase, state.designWavelength * 1000,
+    state.heightNm, state.pitchNm, state.material);
+  return { targetPhase, diameterNm };
+}
+
+/** Phase-map pixel in a top view: screen up is physical +y. */
+export function latticePhaseMapCoordinates(row: number, col: number, size: number, diameter: number): [number, number] {
+  return [((col + 0.5) / size - 0.5) * diameter, (0.5 - (row + 0.5) / size) * diameter];
+}
+
 export class NanostructureLatticeViewer {
   private container: HTMLElement;
   private canvas: HTMLCanvasElement;
@@ -27,14 +44,14 @@ export class NanostructureLatticeViewer {
   private camera: THREE.PerspectiveCamera;
   private controls: OrbitControls;
   private pillarMesh: THREE.InstancedMesh | null = null;
-  private finMesh: THREE.InstancedMesh | null = null;
   private substrate: THREE.Mesh | null = null;
   private animId: number | null = null;
   private unsubscribe: (() => void) | null = null;
   private needsRender: boolean = true;
+  private phaseMapKey = '';
+  private phaseMapMask: number[][] | null = null;
 
   private readonly MAX_GRID_SIZE = 127; // 50 µm aperture at 400 nm pitch
-  private readonly PITCH = 0.4; // 400 nm in um
   private dummy = new THREE.Object3D();
   private color = new THREE.Color();
 
@@ -129,149 +146,77 @@ export class NanostructureLatticeViewer {
       envMapIntensity: 1.0
     });
 
-    // 1. Circular Nanopillar Mesh (for propagation phase: metalens, deflector, hologram)
+    // Circular nanopillars encode the phase for every device mode.
     const cylGeom = new THREE.CylinderGeometry(1, 1, 1, 16);
     cylGeom.rotateX(Math.PI / 2); // Orient along Z axis
     this.pillarMesh = new THREE.InstancedMesh(cylGeom, mat, count);
     this.pillarMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.scene.add(this.pillarMesh);
 
-    // 2. Anisotropic Rectangular Nanofin Mesh (for Pancharatnam-Berry geometric phase)
-    const finGeom = new THREE.BoxGeometry(1, 1, 1);
-    this.finMesh = new THREE.InstancedMesh(finGeom, mat.clone(), count);
-    this.finMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.finMesh.visible = false;
-    this.scene.add(this.finMesh);
-
     this.updateLattice();
   }
 
   public updateLattice(): void {
-    if (!this.pillarMesh || !this.finMesh) return;
+    if (!this.pillarMesh) return;
     const state = opticsStore.getState();
-    const halfWidth = state.diameter / 2;
+    const ag = state.activeGradients;
+    const key = [state.diameter, state.designWavelength, state.focalLength,
+      state.deflectionAngle, state.topologicalCharge, state.heightNm, state.pitchNm,
+      state.material,
+      ag.lens, ag.deflect, ag.vortex, ag.hologram].join(':');
+    if (key === this.phaseMapKey && state.cghPhaseMask === this.phaseMapMask) return;
+
     const markerScale = state.diameter / 30;
     this.substrate?.scale.set(markerScale, markerScale, 1);
-    const heightUm = state.heightNm / 1000.0;
-    const wavelengthUm = state.wavelength;
-    const wavelengthNm = state.wavelength * 1000.0;
-
-    const ag = state.activeGradients || {
-      lens: state.deviceType === 'metalens',
-      deflect: state.deviceType === 'deflector',
-      vortex: state.deviceType === 'vortex',
-      hologram: state.deviceType === 'hologram'
-    };
-
-    const isPBMode = ag.vortex && !ag.lens && !ag.deflect && !ag.hologram;
-    this.pillarMesh.visible = !isPBMode;
-    this.finMesh.visible = isPBMode;
-
-    const targetMesh = isPBMode ? this.finMesh : this.pillarMesh;
-
-    // Ensure hologram phase mask exists if hologram gradient is active
-    let hologramMask = state.cghPhaseMask;
-    if (ag.hologram && !hologramMask) {
-      const targetBmp = generateTargetBitmap(state.hologramTarget || 'crest', 32);
-      const res = runGerchbergSaxton(targetBmp, state.hologramIterations || 15);
-      hologramMask = res.phaseMask;
-      opticsStore.getState().setCghPhaseMask(hologramMask);
+    const heightUm = state.heightNm / 1000;
+    const pitch = state.pitchNm / 1000;
+    const positions = latticePositions(state.diameter, pitch);
+    if (positions.length > this.pillarMesh.instanceMatrix.count) {
+      const old = this.pillarMesh;
+      this.pillarMesh = new THREE.InstancedMesh(old.geometry, old.material, positions.length);
+      this.pillarMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.scene.remove(old);
+      old.dispose();
+      this.scene.add(this.pillarMesh);
     }
-
+    const targetMesh = this.pillarMesh;
     let index = 0;
-    for (const [x, y] of latticePositions(state.diameter, this.PITCH)) {
-        const i = Math.round(x / this.PITCH);
-        const j = Math.round(y / this.PITCH);
-
-        // Calculate multi-gradient superposition phase
-        let phase = 0;
-        if (ag.lens) {
-          phase += getMetalensTargetPhase(x, y, wavelengthUm, state.focalLength);
-        }
-        if (ag.deflect) {
-          phase += getBeamDeflectorPhase(x, wavelengthUm, state.deflectionAngle);
-        }
-        if (ag.vortex) {
-          phase += getVortexBeamPhase(x, y, state.topologicalCharge);
-        }
-        if (ag.hologram && hologramMask) {
-          const maskX = Math.min(hologramMask.length - 1, Math.max(0, Math.floor((x / state.diameter + 0.5) * hologramMask.length)));
-          const maskY = Math.min(hologramMask[maskX].length - 1, Math.max(0, Math.floor((y / state.diameter + 0.5) * hologramMask[maskX].length)));
-          phase += hologramMask[maskX][maskY];
-        } else if (ag.hologram) {
-          const normDist = Math.sqrt(x * x + y * y) / halfWidth;
-          phase += (((Math.sin(normDist * 12.0) * 2.0 + Math.cos(x * 8.0)) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-        }
-
-        // Wrap to [0, 2*PI)
-        phase = ((phase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-
-        if (isPBMode) {
-          // Anisotropic Nanofin (PB Geometric Phase):
-          // Fixed width ~100 nm, length ~260 nm, height h, rotated in-plane by theta = phi / 2
-          const finWidthUm = 0.11;  // 110 nm
-          const finLengthUm = 0.26; // 260 nm
-          const helicity = state.stokes[3] >= 0 ? 1 : -1;
-          const rotAngle = getPBRotationAngle(phase, helicity);
-
-          this.dummy.position.set(x, y, heightUm / 2);
-          this.dummy.scale.set(finWidthUm, finLengthUm, heightUm);
-          this.dummy.rotation.set(0, 0, rotAngle);
-          this.dummy.updateMatrix();
-
-          targetMesh.setMatrixAt(index, this.dummy.matrix);
-
-          const normPhase = phase / (2 * Math.PI);
-          this.color.setHSL(normPhase, 0.88, 0.52);
-          targetMesh.setColorAt(index, this.color);
-        } else {
-          // Circular Nanopillar (Propagation Phase):
-          let diameterNm = targetPhaseToDiameter(phase, wavelengthNm, state.heightNm, state.pitchNm, state.material);
-
-          // Add manufacturing jitter noise
-          if (state.toleranceJitter > 0) {
-            const pseudoRandom = Math.sin(i * 12.9898 + j * 78.233) * 43758.5453;
-            const noise = (pseudoRandom - Math.floor(pseudoRandom) - 0.5) * 2.0 * (state.toleranceJitter * 200.0);
-            diameterNm = Math.max(50, Math.min(state.pitchNm - 10, diameterNm + noise));
-          }
-
-          const response = queryUnitCellLUT(
-            diameterNm,
-            wavelengthNm,
-            state.heightNm,
-            state.pitchNm,
-            state.material
-          );
-
-          const radiusUm = (diameterNm / 2) / 1000.0;
-
-          this.dummy.position.set(x, y, heightUm / 2);
-          this.dummy.scale.set(radiusUm, radiusUm, heightUm);
-          this.dummy.rotation.set(0, 0, 0);
-          this.dummy.updateMatrix();
-
-          targetMesh.setMatrixAt(index, this.dummy.matrix);
-
-          const normPhase = phase / (2 * Math.PI);
-          if (response.fabFeasible) {
-            this.color.setHSL(normPhase, 0.85, 0.52);
-          } else {
-            // High contrast alert amber/crimson for nanofab violations
-            this.color.setRGB(1.0, 0.15, 0.2);
-          }
-          targetMesh.setColorAt(index, this.color);
-        }
-
-        index++;
+    for (const [x, y] of positions) {
+      const sample = latticePillarGeometry(state, x, y);
+      this.dummy.position.set(x, y, heightUm / 2);
+      this.dummy.scale.set(sample.diameterNm / 2000, sample.diameterNm / 2000, heightUm);
+      this.dummy.rotation.set(0, 0, 0);
+      this.dummy.updateMatrix();
+      targetMesh.setMatrixAt(index, this.dummy.matrix);
+      // CSS map colors are sRGB; convert the same hues for Three's linear scene.
+      this.color.setHSL(sample.targetPhase / (2 * Math.PI), 0.85, 0.52, THREE.SRGBColorSpace);
+      targetMesh.setColorAt(index++, this.color);
     }
-
     targetMesh.count = index;
     targetMesh.computeBoundingSphere();
     targetMesh.instanceMatrix.needsUpdate = true;
-    if (targetMesh.instanceColor) {
-      targetMesh.instanceColor.needsUpdate = true;
-    }
+    if (targetMesh.instanceColor) targetMesh.instanceColor.needsUpdate = true;
+    this.updatePhaseMap(state);
+    this.phaseMapKey = key;
+    this.phaseMapMask = state.cghPhaseMask;
     this.needsRender = true;
+  }
+
+  private updatePhaseMap(state: OpticsState): void {
+    const canvas = this.container.querySelector<HTMLCanvasElement>('#lattice-phase-map');
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    const size = canvas.width;
+    ctx.clearRect(0, 0, size, size);
+    for (let row = 0; row < size; row++) {
+      for (let col = 0; col < size; col++) {
+        const [x, y] = latticePhaseMapCoordinates(row, col, size, state.diameter);
+        if (x * x + y * y > state.diameter * state.diameter / 4) continue;
+        const phase = latticeTargetPhase(state, x, y);
+        ctx.fillStyle = `hsl(${phase / (2 * Math.PI) * 360}, 85%, 52%)`;
+        ctx.fillRect(col, row, 1, 1);
+      }
+    }
   }
 
   public resetCamera(): void {

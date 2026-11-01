@@ -32,15 +32,11 @@ export class PerformanceHUD {
     const abbeLimitUm = calculateAbbeLimit(state.wavelength, na);
     const abbeLimitNm = abbeLimitUm * 1000;
 
-    // Simulated FWHM considering phase error and jitter
-    const fwhmFactor = 1.0 + 3.0 * state.toleranceJitter;
-    const actualFwhmNm = abbeLimitNm * fwhmFactor;
+    const actualFwhmNm = abbeLimitNm;
 
-    // Phase discretization variance (3-bit / 8-level) + manufacturing jitter
-    const sigmaJitterRad = state.toleranceJitter * 2 * Math.PI;
+    // Nominal phase discretization variance (3-bit / 8-level).
     const sigmaDiscRad = (2 * Math.PI) / (8 * Math.sqrt(12));
-    const sigmaTotal = Math.sqrt(sigmaJitterRad * sigmaJitterRad + sigmaDiscRad * sigmaDiscRad);
-    const strehlRatio = Math.max(0.01, Math.min(1.0, Math.exp(-sigmaTotal * sigmaTotal)));
+    const strehlRatio = Math.exp(-sigmaDiscRad * sigmaDiscRad);
 
     // Material transmission & efficiency
     const lutSample = queryUnitCellLUT(180, state.wavelength * 1000, state.heightNm, state.pitchNm, state.material);
@@ -93,7 +89,7 @@ export class PerformanceHUD {
             <span class="hud-label">Strehl Ratio (S)</span>
             <div class="hud-value-row">
               <span class="hud-value ${strehlRatio > 0.8 ? 'highlight-green' : 'highlight-amber'}">${strehlRatio.toFixed(2)}</span>
-              <span class="hud-sub">Phase discretization & CD jitter</span>
+              <span class="hud-sub">Phase discretization</span>
             </div>
           </div>
 

@@ -8,11 +8,31 @@ export interface HologramResult {
   rmse: number;                // Root mean square reconstruction error
 }
 
+/** Mask rows follow physical +y; the Fourier output is displayed top to bottom. */
+export function sampleHologramPhase(mask: number[][], x: number, y: number, diameter: number): number {
+  const row = Math.min(mask.length - 1, Math.max(0, Math.floor((y / diameter + 0.5) * mask.length)));
+  const col = Math.min(mask[row].length - 1, Math.max(0, Math.floor((x / diameter + 0.5) * mask[row].length)));
+  return mask[row][col];
+}
+
+/** One source per phase cell, using the same circular pupil as phase retrieval. */
+export function hologramPupilSamples(mask: number[][], diameter: number): Array<{ x: number; y: number; phase: number }> {
+  const samples: Array<{ x: number; y: number; phase: number }> = [];
+  for (let row = 0; row < mask.length; row++) for (let col = 0; col < mask[row].length; col++) {
+    const x = ((col + 0.5) / mask[row].length - 0.5) * diameter;
+    const y = ((row + 0.5) / mask.length - 0.5) * diameter;
+    if (x * x + y * y <= diameter * diameter / 4) samples.push({ x, y, phase: mask[row][col] });
+  }
+  return samples;
+}
+
 /**
  * 2D Discrete Fourier Transform (and inverse) on N x N complex arrays.
  * For N = 32, 2D DFT runs in ~2ms.
  */
-function dft2d(
+const dftKernels = new Map<number, { cos: Float64Array; sin: Float64Array }>();
+
+export function dft2d(
   reIn: number[][],
   imIn: number[][],
   inverse: boolean = false
@@ -22,7 +42,16 @@ function dft2d(
   const imOut = Array.from({ length: N }, () => new Float64Array(N));
 
   const sign = inverse ? 1 : -1;
-  const factor = (sign * 2 * Math.PI) / N;
+  let kernel = dftKernels.get(N);
+  if (!kernel) {
+    kernel = { cos: new Float64Array(N * N), sin: new Float64Array(N * N) };
+    for (let k = 0; k < N; k++) for (let n = 0; n < N; n++) {
+      const angle = 2 * Math.PI * k * n / N;
+      kernel.cos[k * N + n] = Math.cos(angle);
+      kernel.sin[k * N + n] = Math.sin(angle);
+    }
+    dftKernels.set(N, kernel);
+  }
 
   // 1D DFT along rows
   const tempRe = Array.from({ length: N }, () => new Float64Array(N));
@@ -33,9 +62,8 @@ function dft2d(
       let sumRe = 0;
       let sumIm = 0;
       for (let n = 0; n < N; n++) {
-        const angle = factor * k * n;
-        const cosA = Math.cos(angle);
-        const sinA = Math.sin(angle);
+        const cosA = kernel.cos[k * N + n];
+        const sinA = sign * kernel.sin[k * N + n];
         sumRe += reIn[r][n] * cosA - imIn[r][n] * sinA;
         sumIm += reIn[r][n] * sinA + imIn[r][n] * cosA;
       }
@@ -50,13 +78,12 @@ function dft2d(
       let sumRe = 0;
       let sumIm = 0;
       for (let n = 0; n < N; n++) {
-        const angle = factor * k * n;
-        const cosA = Math.cos(angle);
-        const sinA = Math.sin(angle);
+        const cosA = kernel.cos[k * N + n];
+        const sinA = sign * kernel.sin[k * N + n];
         sumRe += tempRe[n][c] * cosA - tempIm[n][c] * sinA;
         sumIm += tempRe[n][c] * sinA + tempIm[n][c] * cosA;
       }
-      const norm = inverse ? 1 / N : 1;
+      const norm = inverse ? 1 / (N * N) : 1;
       reOut[k][c] = sumRe * norm;
       imOut[k][c] = sumIm * norm;
     }
@@ -144,21 +171,34 @@ export function runGerchbergSaxton(
   iterations: number = 20
 ): HologramResult {
   const N = targetAmplitude.length;
+  if (N < 2 || targetAmplitude.some((row) => row.length !== N || row.some((value) => !Number.isFinite(value) || value < 0)) ||
+    !targetAmplitude.some((row) => row.some((value) => value > 0))) {
+    throw new RangeError('The target must be a finite, nonnegative square amplitude array with nonzero energy.');
+  }
+  if (!Number.isInteger(iterations) || iterations < 1) throw new RangeError('Iterations must be a positive integer.');
 
-  // 1. Initial metasurface field: uniform amplitude, random phase
+  // 1. Initial metasurface field: circular pupil with reproducible random phase
   let metaRe = Array.from({ length: N }, () => new Float64Array(N));
   let metaIm = Array.from({ length: N }, () => new Float64Array(N));
+  const aperture = Array.from({ length: N }, (_, r) =>
+    Array.from({ length: N }, (_, c) => Math.hypot(r + 0.5 - N / 2, c + 0.5 - N / 2) <= N / 2 ? 1 : 0));
+  // A fixed initialization makes target/iteration comparisons reproducible.
+  let seed = 42;
 
   for (let r = 0; r < N; r++) {
     for (let c = 0; c < N; c++) {
-      const randPhase = Math.random() * 2 * Math.PI;
-      metaRe[r][c] = Math.cos(randPhase);
-      metaIm[r][c] = Math.sin(randPhase);
+      seed = (Math.imul(1664525, seed) + 1013904223) >>> 0;
+      const randPhase = (seed / 4294967296) * 2 * Math.PI;
+      metaRe[r][c] = aperture[r][c] * Math.cos(randPhase);
+      metaIm[r][c] = aperture[r][c] * Math.sin(randPhase);
     }
   }
 
-  // Pre-shift target amplitude so target appears centered in far-field
-  const shiftedTarget = fftShift2D(targetAmplitude);
+  // Image center = floor(N/2); image up is +y. Map explicitly into
+  // unshifted Fourier indices, including odd grids (fftshift != ifftshift).
+  const half = Math.floor(N / 2);
+  const shiftedTarget = Array.from({ length: N }, (_, ky) =>
+    Array.from({ length: N }, (_, kx) => targetAmplitude[(half - ky + N) % N][(kx + half) % N]));
 
   for (let iter = 0; iter < iterations; iter++) {
     // Forward propagation to far-field (Fourier Transform)
@@ -195,9 +235,9 @@ export function runGerchbergSaxton(
       for (let c = 0; c < N; c++) {
         const re = metaBack.re[r][c];
         const im = metaBack.im[r][c];
-        const mag = Math.sqrt(re * re + im * im) || 1e-9;
-        metaRe[r][c] = re / mag;
-        metaIm[r][c] = im / mag;
+        const phase = Math.atan2(im, re);
+        metaRe[r][c] = aperture[r][c] * Math.cos(phase);
+        metaIm[r][c] = aperture[r][c] * Math.sin(phase);
       }
     }
   }
@@ -227,16 +267,18 @@ export function runGerchbergSaxton(
   }
 
   // Shift far-field so target center aligns with center of view
-  const centeredRecon = fftShift2D(rawRecon);
+  const centeredRecon = Array.from({ length: N }, (_, row) =>
+    Array.from({ length: N }, (_, col) => rawRecon[(half - row + N) % N][(col - half + N) % N]));
   const normRecon = centeredRecon.map((row) =>
     row.map((val) => (maxI > 0 ? val / maxI : 0))
   );
 
   // Compute RMSE against target amplitude
   let errorSum = 0;
+  const maxTarget = Math.max(...targetAmplitude.flat());
   for (let r = 0; r < N; r++) {
     for (let c = 0; c < N; c++) {
-      const diff = Math.sqrt(normRecon[r][c]) - targetAmplitude[r][c];
+      const diff = Math.sqrt(normRecon[r][c]) - targetAmplitude[r][c] / maxTarget;
       errorSum += diff * diff;
     }
   }

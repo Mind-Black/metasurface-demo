@@ -1,3 +1,5 @@
+import { hologramPupilSamples } from './gerchbergSaxton';
+
 /**
  * Hyperbolic focusing phase profile for a spherical aberration-free metalens.
  * phi(r) = -k0 * (sqrt(r^2 + f^2) - f)
@@ -136,11 +138,12 @@ export interface DemonstrationIntensityState {
   diameter?: number;
   deflectionAngle?: number;
   topologicalCharge?: number;
-  toleranceJitter?: number;
   cghPhaseMask?: number[][] | null;
 }
 
 const SCALE_CACHE = new Map<string, IntensityScaleRange>();
+const MASK_IDS = new WeakMap<number[][], number>();
+let nextMaskId = 1;
 
 /**
  * Estimates the maximum wavefield intensity |E|^2 for a specific optical demonstration
@@ -213,57 +216,50 @@ export function estimateDemonstrationMaxIntensity(state: DemonstrationIntensityS
     }
   }
 
-  let holoPhases: Float32Array | null = null;
-  if (holoOn && cghPhaseMask && cghPhaseMask.length > 0) {
-    const maskRows = cghPhaseMask.length;
-    const maskCols = cghPhaseMask[0].length;
-    const midRow = Math.floor(maskRows / 2);
-    holoPhases = new Float32Array(128);
-    for (let i = 0; i < 128; i++) {
-      const colIdx = Math.min(maskCols - 1, Math.floor((i / 128) * maskCols));
-      holoPhases[i] = cghPhaseMask[midRow][colIdx];
-    }
-  }
+  const useHologramPupil = holoOn && cghPhaseMask && cghPhaseMask.length > 0;
+  const pupil = useHologramPupil ? hologramPupilSamples(cghPhaseMask, diameter) : null;
+  const count = pupil ? pupil.length : NUM_ELEMENTS;
 
   for (let p = 0; p < points.length; p++) {
     const [x, z] = points[p];
     let eRe = 0;
     let eIm = 0;
-    for (let i = 0; i < NUM_ELEMENTS; i++) {
-      const xPos = -radius + (i + 0.5) * elementSpacing;
+    for (let i = 0; i < count; i++) {
+      const xPos = pupil ? pupil[i].x : -radius + (i + 0.5) * elementSpacing;
+      const yPos = pupil ? pupil[i].y : 0;
       let targetPhase = 0;
       if (lensOn) {
-        targetPhase += -kDesign * (Math.sqrt(xPos * xPos + focalLength * focalLength) - focalLength);
+        targetPhase += -kDesign * (Math.sqrt(xPos * xPos + yPos * yPos + focalLength * focalLength) - focalLength);
       }
       if (deflectOn) {
         targetPhase += kDesign * Math.sin(deflectionAngle) * xPos;
       }
       if (vortexOn) {
         const normPos = xPos / Math.max(0.001, radius);
-        targetPhase += topologicalCharge * (normPos >= 0.0 ? 0.0 : PI);
+        targetPhase += topologicalCharge * (useHologramPupil ? Math.atan2(yPos, xPos) : (normPos >= 0.0 ? 0.0 : PI));
       }
       if (holoOn) {
-        if (holoPhases) {
-          targetPhase += holoPhases[i];
+        if (pupil) {
+          targetPhase += pupil[i].phase;
         } else {
           const norm = i / 128;
           targetPhase += (((Math.sin(norm * 18.8495) * 1.5 + Math.cos(norm * 37.699)) % (2 * PI)) + 2 * PI) % (2 * PI);
         }
       }
       const dx = x - xPos;
-      const dist = Math.max(0.001, Math.sqrt(dx * dx + z * z));
+      const dist = Math.max(0.001, Math.sqrt(dx * dx + yPos * yPos + z * z));
       const obliquity = 0.5 * (1.0 + z / dist);
-      let amp = obliquity / Math.sqrt(dist);
-      if (vortexOn && Math.abs(topologicalCharge) > 0.01) {
+      let amp = obliquity / (pupil ? dist : Math.sqrt(dist));
+      if (!pupil && vortexOn && Math.abs(topologicalCharge) > 0.01) {
         amp *= (0.2 + 0.8 * Math.abs(xPos / radius));
       }
       const totalPhase = targetPhase + k * dist;
       eRe += amp * Math.cos(totalPhase);
       eIm += amp * Math.sin(totalPhase);
     }
-    eRe /= Math.sqrt(NUM_ELEMENTS);
-    eIm /= Math.sqrt(NUM_ELEMENTS);
-    if (vortexOn && Math.abs(topologicalCharge) > 0.01) {
+    eRe /= Math.sqrt(count);
+    eIm /= Math.sqrt(count);
+    if (!pupil && vortexOn && Math.abs(topologicalCharge) > 0.01) {
       const coreCenterX = (lensOn && deflectOn) ? (focalLength * (designWavelength / wavelength) * tanTheta) : (deflectOn ? z * tanTheta : 0.0);
       const coreRadius = (0.4 + 0.3 * Math.abs(topologicalCharge)) * (wavelength / 0.532) * (1.0 + 0.4 * (z / Math.max(0.1, focalLength)));
       const vortexCore = Math.min(1.0, Math.max(0.0, Math.abs(x - coreCenterX) / coreRadius));
@@ -283,7 +279,12 @@ export function estimateDemonstrationMaxIntensity(state: DemonstrationIntensityS
  */
 export function getDemonstrationIntensityScale(state: DemonstrationIntensityState): IntensityScaleRange {
   const gKey = state.activeGradients ? `${state.activeGradients.lens}_${state.activeGradients.deflect}_${state.activeGradients.vortex}_${state.activeGradients.hologram}` : state.deviceType;
-  const cacheKey = `${state.deviceType}_${gKey}_${state.wavelength}_${state.designWavelength}_${state.focalLength}_${state.diameter}_${state.deflectionAngle}_${state.topologicalCharge}_${Boolean(state.cghPhaseMask)}`;
+  let maskId = 0;
+  if (state.cghPhaseMask) {
+    if (!MASK_IDS.has(state.cghPhaseMask)) MASK_IDS.set(state.cghPhaseMask, nextMaskId++);
+    maskId = MASK_IDS.get(state.cghPhaseMask)!;
+  }
+  const cacheKey = `${state.deviceType}_${gKey}_${state.wavelength}_${state.designWavelength}_${state.focalLength}_${state.diameter}_${state.deflectionAngle}_${state.topologicalCharge}_${maskId}`;
   const cached = SCALE_CACHE.get(cacheKey);
   if (cached) return cached;
 
@@ -301,6 +302,7 @@ export function getDemonstrationIntensityScale(state: DemonstrationIntensityStat
     step,
     ticks
   };
+  if (SCALE_CACHE.size >= 256) SCALE_CACHE.clear();
   SCALE_CACHE.set(cacheKey, result);
   return result;
 }

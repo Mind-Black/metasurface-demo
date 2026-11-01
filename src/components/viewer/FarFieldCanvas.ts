@@ -22,6 +22,7 @@ export class FarFieldRenderer {
   private result: FarFieldResult | null = null;
   private sinMax = 1.0;
   private lastKey = '';
+  private lastMask: number[][] | null | undefined;
   private logScale = false;
   private intensityMax = 1;
   private mode: RenderMode = 'field';
@@ -113,10 +114,10 @@ export class FarFieldRenderer {
       input.wavelength, input.designWavelength, input.focalLength, input.diameter,
       input.deflectionAngle, input.topologicalCharge, input.lens, input.deflect,
       input.vortex, input.hologram, input.hologram ? s.hologramTarget : '',
-      input.hologram && input.cghPhaseMask ? input.cghPhaseMask[0]?.[0] : '',
     ]);
-    if (key !== this.lastKey) {
+    if (key !== this.lastKey || (input.hologram && input.cghPhaseMask !== this.lastMask)) {
       this.lastKey = key;
+      this.lastMask = input.cghPhaseMask;
       this.result = computeFarField(input, 256, this.sinMax);
     }
     this.syncAnimation();

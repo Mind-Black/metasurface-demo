@@ -67,7 +67,6 @@ describe('PerformanceHUD Metrics & Alarms', () => {
       stokes: [1, 0, 0, 1],
       pitchNm: 400,
       heightNm: 600,
-      toleranceJitter: 0.02,
       renderMode: 'field',
       isPlaying: true
     });
@@ -118,7 +117,6 @@ describe('OpticsStore Reactive State Management', () => {
       stokes: [1, 0, 0, 1],
       pitchNm: 400,
       heightNm: 600,
-      toleranceJitter: 0.02,
       renderMode: 'field',
       isPlaying: true,
       cghPhaseMask: null
@@ -190,17 +188,15 @@ describe('OpticsStore Reactive State Management', () => {
     expect(template).toContain('id="viewport-controls-panel"');
     expect(template).toContain('id="demo-slider-focal"');
     expect(template).toContain('id="demo-slider-diameter"');
-    expect(template).toContain('id="demo-slider-deflect-diam"');
-    expect(template).toContain('id="demo-slider-vortex-diam"');
-    expect(template).toContain('id="demo-slider-holo-diam"');
-    for (const id of ['diameter', 'deflect-diam', 'vortex-diam', 'holo-diam']) {
-      expect(template).toMatch(new RegExp(`id="demo-slider-${id}"[^>]*max="50"`));
-    }
+    expect(template).toMatch(/id="demo-slider-diameter"[^>]*max="50"/);
+    expect(template.match(/aria-label="Demonstration Aperture Diameter"/g)).toHaveLength(1);
+    expect(template.match(/aria-label="Demonstration Wavelength"/g)).toHaveLength(1);
     expect(template).toContain('id="demo-slider-wavelength"');
     expect(template).toContain('id="demo-controls-metalens"');
     expect(template).toContain('id="demo-controls-deflector"');
     expect(template).toContain('id="demo-controls-vortex"');
     expect(template).toContain('id="demo-controls-hologram"');
+    expect(template).toContain('id="demo-slider-holo-iterations"');
     expect(template).toContain('data-demo-focal="15"');
     expect(template).toContain('data-demo-focal="25"');
     expect(template).toContain('data-demo-focal="38"');

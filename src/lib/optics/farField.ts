@@ -5,6 +5,8 @@
  * Output axes are direction sines (sin θx, sin θy) = λ·(fx, fy).
  */
 
+import { sampleHologramPhase } from './gerchbergSaxton';
+
 export interface FarFieldInput {
   wavelength: number;        // operating wavelength [µm]
   designWavelength: number;  // fabrication design wavelength [µm]
@@ -31,7 +33,6 @@ const PITCH = 0.2; // aperture sampling pitch [µm]
 
 /** Transmitted aperture phase at (x, y) µm, matching the XZ/XY wavefield models. */
 export function aperturePhase(p: FarFieldInput, x: number, y: number): number {
-  const radius = p.diameter * 0.5;
   const kDesign = (2 * Math.PI) / Math.max(0.2, p.designWavelength);
   let phase = 0;
   if (p.lens) {
@@ -40,12 +41,7 @@ export function aperturePhase(p: FarFieldInput, x: number, y: number): number {
   if (p.deflect) phase += kDesign * Math.sin(p.deflectionAngle) * x;
   if (p.vortex) phase += p.topologicalCharge * Math.atan2(y, x);
   if (p.hologram && p.cghPhaseMask && p.cghPhaseMask.length > 0) {
-    const mask = p.cghPhaseMask;
-    const rows = mask.length;
-    const cols = mask[0].length;
-    const col = Math.min(cols - 1, Math.max(0, Math.floor((x / radius * 0.5 + 0.5) * cols)));
-    const row = Math.min(rows - 1, Math.max(0, Math.floor((y / radius * 0.5 + 0.5) * rows)));
-    phase += mask[row][col];
+    phase += sampleHologramPhase(p.cghPhaseMask, x, y, p.diameter);
   }
   return phase;
 }

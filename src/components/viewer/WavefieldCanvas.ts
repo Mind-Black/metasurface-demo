@@ -1,3 +1,4 @@
+import { HologramTexture } from './HologramTexture';
 import { opticsStore, OpticsState, RenderMode, DeviceType } from '@/lib/store/useOpticsStore';
 
 const VS_SOURCE = `#version 300 es
@@ -31,12 +32,11 @@ uniform int   uEnableHologram;   // Multi-gradient: 1 = active, 0 = inactive
 uniform float uProbeZ;           // Selected Z slice coordinate in micrometers
 uniform int   uShowProbe;        // 1 = show probe line, 0 = hide
 uniform float uTopologicalCharge;
-uniform float uToleranceJitter;   // manufacturing noise [0, 0.15]
 uniform int   uRenderMode;       // 0: Re{E(x,z,t)}, 1: Intensity |E|^2, 2: Phase arg(E)
 uniform int   uLogIntensity;
 uniform float uIntensityMax;     // Max intensity displayed on colormap
 uniform int   uShowRays;         // 0: no, 1: yes
-uniform float uHologramPhase[128];
+uniform highp sampler2D uHologramPhase;
 
 const float PI = 3.14159265358979323846;
 const int NUM_ELEMENTS = 128;
@@ -74,15 +74,26 @@ void main() {
   float elementSpacing = uDiameter / float(NUM_ELEMENTS);
   float radius = uDiameter * 0.5;
 
-  for (int i = 0; i < NUM_ELEMENTS; i++) {
+  ivec2 maskSize = textureSize(uHologramPhase, 0);
+  int count = uEnableHologram == 1 ? maskSize.x * maskSize.y : NUM_ELEMENTS;
+  float activeCount = 0.0;
+  for (int i = 0; i < count; i++) {
     float xPos = -radius + (float(i) + 0.5) * elementSpacing;
+    float yPos = 0.0;
+    if (uEnableHologram == 1) {
+      vec2 cell = (vec2(float(i % maskSize.x), float(i / maskSize.x)) + 0.5) / vec2(maskSize);
+      xPos = (cell.x - 0.5) * uDiameter;
+      yPos = (cell.y - 0.5) * uDiameter;
+      if (xPos * xPos + yPos * yPos > radius * radius) continue;
+    }
+    activeCount += 1.0;
 
     // Physical phase profile imparted by fabricated metasurface nanostructures.
     // Multi-gradient superposition: combines all active phase gradients linearly.
     float targetPhase = 0.0;
     if (uEnableLens == 1) {
       // Hyperbolic metalens phase profile fabricated at uDesignWavelength
-      targetPhase += -kDesign * (sqrt(xPos * xPos + uFocalLength * uFocalLength) - uFocalLength);
+      targetPhase += -kDesign * (sqrt(xPos * xPos + yPos * yPos + uFocalLength * uFocalLength) - uFocalLength);
     }
     if (uEnableDeflect == 1) {
       // Linear phase gradient fabricated at uDesignWavelength: dphi/dx = kDesign * sin(theta)
@@ -90,27 +101,23 @@ void main() {
     }
     if (uEnableVortex == 1) {
       // Vortex spiral phase profile
-      float normPos = xPos / max(0.001, radius);
-      targetPhase += uTopologicalCharge * (normPos >= 0.0 ? 0.0 : PI);
+      targetPhase += uTopologicalCharge * (uEnableHologram == 1 ? atan(yPos, xPos) : (xPos >= 0.0 ? 0.0 : PI));
     }
     if (uEnableHologram == 1) {
       // Gerchberg-Saxton synthesized hologram phase mask
-      targetPhase += uHologramPhase[i];
+      targetPhase += texture(uHologramPhase, vec2(xPos, yPos) / uDiameter + 0.5).r;
     }
 
-    // Manufacturing jitter noise
-    float hash = fract(sin(float(i) * 12.9898) * 43758.5453);
-    targetPhase += (hash - 0.5) * uToleranceJitter * 2.0 * PI;
-
     float dx = x - xPos;
-    float dist = sqrt(dx * dx + z * z);
+    float dist = sqrt(dx * dx + yPos * yPos + z * z);
     if (dist < 0.001) dist = 0.001;
 
     // Obliquity factor K(theta) = (1 + cos(theta)) / 2 = (1 + z/dist) / 2
     float obliquity = 0.5 * (1.0 + z / dist);
-    float amp = obliquity / sqrt(dist);
+    // The hologram is a 2D pupil radiating spherical waves (amplitude ∝ 1/r).
+    float amp = obliquity / (uEnableHologram == 1 ? dist : sqrt(dist));
 
-    if (uEnableVortex == 1 && abs(uTopologicalCharge) > 0.01) {
+    if (uEnableHologram == 0 && uEnableVortex == 1 && abs(uTopologicalCharge) > 0.01) {
       amp *= (0.2 + 0.8 * abs(xPos / radius));
     }
 
@@ -120,10 +127,10 @@ void main() {
     eFieldTotal.y += amp * sin(totalPhase);
   }
 
-  eFieldTotal /= sqrt(float(NUM_ELEMENTS));
+  eFieldTotal /= sqrt(max(1.0, activeCount));
 
   // For vortex beams, enforce topological phase singularity null at beam axis
-  if (uEnableVortex == 1 && abs(uTopologicalCharge) > 0.01) {
+  if (uEnableHologram == 0 && uEnableVortex == 1 && abs(uTopologicalCharge) > 0.01) {
     float xCenter = 0.0;
     if (uEnableDeflect == 1) {
       float sinDeflect = (uWavelength / uDesignWavelength) * sin(uDeflectionAngle);
@@ -143,7 +150,8 @@ void main() {
   vec3 baseColor = vec3(0.0);
   if (uRenderMode == 0) {
     // Instantaneous Real Field
-    float val = clamp(instantaneousField * 0.7, -1.0, 1.0);
+    float fieldScale = uEnableHologram == 1 ? inversesqrt(max(0.001, uIntensityMax)) : 1.0;
+    float val = clamp(instantaneousField * fieldScale * 0.7, -1.0, 1.0);
     baseColor = val > 0.0
       ? mix(vec3(0.04, 0.05, 0.09), vec3(0.12, 0.85, 1.0), val)
       : mix(vec3(0.04, 0.05, 0.09), vec3(1.0, 0.2, 0.45), -val);
@@ -239,8 +247,10 @@ export class WavefieldRenderer {
   private animFrameId: number | null = null;
   private startTime: number = performance.now();
   private currentTime: number = 0;
+  private lastHologramFrame = 0;
+  private lastRenderedState: OpticsState | null = null;
   private showRays: boolean = false;
-  private hologramPhaseArray = new Float32Array(128);
+  private hologramTexture: HologramTexture | null = null;
 
   private uniformLocations: Record<string, WebGLUniformLocation | null> = {};
 
@@ -266,6 +276,7 @@ export class WavefieldRenderer {
       return;
     }
     this.gl = gl;
+    this.hologramTexture = new HologramTexture(gl);
 
     const vs = this.compileShader(gl.VERTEX_SHADER, VS_SOURCE);
     const fs = this.compileShader(gl.FRAGMENT_SHADER, FS_SOURCE);
@@ -310,7 +321,7 @@ export class WavefieldRenderer {
       'uResolution', 'uTime', 'uZoom', 'uWavelength', 'uDesignWavelength', 'uFocalLength', 'uDiameter',
       'uDeflectionAngle', 'uDeviceType', 'uTopologicalCharge',
       'uEnableLens', 'uEnableDeflect', 'uEnableVortex', 'uEnableHologram', 'uProbeZ', 'uShowProbe',
-      'uToleranceJitter', 'uRenderMode', 'uLogIntensity', 'uIntensityMax', 'uShowRays', 'uHologramPhase'
+      'uRenderMode', 'uLogIntensity', 'uIntensityMax', 'uShowRays', 'uHologramPhase'
     ];
     for (const u of uniforms) {
       this.uniformLocations[u] = gl.getUniformLocation(program, u);
@@ -333,7 +344,10 @@ export class WavefieldRenderer {
 
   public resize(): void {
     if (!this.gl) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const isHologram = opticsStore.getState().activeGradients.hologram;
+    const dpr = isHologram
+      ? Math.min(window.devicePixelRatio || 1, 320 / Math.max(1, this.canvas.clientWidth, this.canvas.clientHeight))
+      : Math.min(window.devicePixelRatio || 1, 2);
     const displayWidth = Math.floor(this.canvas.clientWidth * dpr);
     const displayHeight = Math.floor(this.canvas.clientHeight * dpr);
     if (this.canvas.width !== displayWidth || this.canvas.height !== displayHeight) {
@@ -371,6 +385,11 @@ export class WavefieldRenderer {
   public render(timestamp?: number): void {
     if (!this.gl || !this.program || !this.vao) return;
     const state = opticsStore.getState();
+    if (state.activeGradients.hologram && timestamp !== undefined) {
+      if (state === this.lastRenderedState && timestamp - this.lastHologramFrame < 100) return;
+      this.lastHologramFrame = timestamp;
+    }
+    this.lastRenderedState = state;
 
     if (state.isPlaying && timestamp !== undefined) {
       this.currentTime = (timestamp - this.startTime) * 0.001;
@@ -414,7 +433,6 @@ export class WavefieldRenderer {
     gl.uniform1i(this.uniformLocations.uShowProbe, 1);
 
     gl.uniform1f(this.uniformLocations.uTopologicalCharge, state.topologicalCharge);
-    gl.uniform1f(this.uniformLocations.uToleranceJitter, state.toleranceJitter);
 
     let renderModeInt = 0;
     if (state.renderMode === 'intensity') renderModeInt = 1;
@@ -424,25 +442,7 @@ export class WavefieldRenderer {
     gl.uniform1f(this.uniformLocations.uIntensityMax, state.intensityMax ?? 6.0);
     gl.uniform1i(this.uniformLocations.uShowRays, this.showRays ? 1 : 0);
 
-    // Update hologram phase array
-    if (state.deviceType === 'hologram' && state.cghPhaseMask) {
-      const mask = state.cghPhaseMask;
-      const maskRows = mask.length;
-      const maskCols = mask[0].length;
-      const midRow = Math.floor(maskRows / 2);
-      for (let i = 0; i < 128; i++) {
-        const colIdx = Math.min(maskCols - 1, Math.floor((i / 128) * maskCols));
-        this.hologramPhaseArray[i] = mask[midRow][colIdx];
-      }
-    } else {
-      for (let i = 0; i < 128; i++) {
-        const norm = i / 128;
-        this.hologramPhaseArray[i] = (((Math.sin(norm * 18.8495) * 1.5 + Math.cos(norm * 37.699)) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-      }
-    }
-    if (this.uniformLocations.uHologramPhase) {
-      gl.uniform1fv(this.uniformLocations.uHologramPhase, this.hologramPhaseArray);
-    }
+    this.hologramTexture?.bind(state.cghPhaseMask, this.uniformLocations.uHologramPhase);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
@@ -499,6 +499,7 @@ export class WavefieldRenderer {
       this.canvas.removeEventListener('pointercancel', this.pointerUpHandler);
       this.pointerUpHandler = null;
     }
+    this.hologramTexture?.dispose();
     if (this.gl && this.program) {
       this.gl.deleteProgram(this.program);
     }
