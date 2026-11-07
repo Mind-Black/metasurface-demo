@@ -220,6 +220,14 @@ const sinc = (x: number) => (Math.abs(x) < 1e-9 ? 1 : Math.sin(Math.PI * x) / (M
 const spectrumCache: Spectrum[] = [];
 const SPECTRUM_SLOTS = 2;
 
+/** Scratch for the 1024² transform, reused across calls so a cold spectrum allocates only its result. */
+const scratchRe = new Float64Array(N * N);
+const scratchIm = new Float64Array(N * N);
+const columnRe = new Float64Array(N);
+const columnIm = new Float64Array(N);
+const rowHasData = new Uint8Array(N);
+const columnNeeded = new Uint8Array(N);
+
 /** Angular spectrum of the lattice field, including every order that propagates in air. */
 export function deviceSpectrum(p: FarFieldInput): Spectrum {
   const key = deviceKey(p);
@@ -233,8 +241,11 @@ export function deviceSpectrum(p: FarFieldInput): Spectrum {
   const pitch = TABLE_PITCH_UM;
   const response = phaseResponse(p.designWavelength, p.wavelength);
   const size = response.re.length;
-  const re = new Float64Array(N * N);
-  const im = new Float64Array(N * N);
+  const re = scratchRe;
+  const im = scratchIm;
+  re.fill(0);
+  im.fill(0);
+  rowHasData.fill(0);
   const radius = p.diameter / 2;
   const limit = Math.floor(radius / pitch);
   for (let j = -limit; j <= limit; j++) {
@@ -246,47 +257,79 @@ export function deviceSpectrum(p: FarFieldInput): Spectrum {
       const bin = Math.floor((((phase / TAU) % 1) + 1) % 1 * size) % size;
       re[wrapIndex(j) * N + wrapIndex(i)] = response.re[bin];
       im[wrapIndex(j) * N + wrapIndex(i)] = response.im[bin];
+      rowHasData[wrapIndex(j)] = 1;
     }
   }
-  for (let row = 0; row < N; row++) fft(re, im, N, row * N, 1);
-  for (let col = 0; col < N; col++) fft(re, im, N, col, N);
 
   const df = 1 / (N * pitch);
   const fMax = 1 / p.wavelength;
   const span = Math.floor(fMax / df);
+  const width = 2 * span + 1;
+
+  // A row of zeros transforms to zeros, so only the rows holding aperture samples need the pass.
+  for (let row = 0; row < N; row++) if (rowHasData[row]) fft(re, im, N, row * N, 1);
+  // Only columns that are read below need the second pass. Gathering each into a contiguous buffer
+  // keeps the butterflies out of the 8 kB-stride access pattern; the arithmetic is unchanged.
+  columnNeeded.fill(0);
+  for (let kx = -span; kx <= span; kx++) columnNeeded[wrapIndex(kx)] = 1;
+  for (let col = 0; col < N; col++) {
+    if (!columnNeeded[col]) continue;
+    for (let row = 0, at = col; row < N; row++, at += N) {
+      columnRe[row] = re[at];
+      columnIm[row] = im[at];
+    }
+    fft(columnRe, columnIm, N);
+    for (let row = 0, at = col; row < N; row++, at += N) {
+      re[at] = columnRe[row];
+      im[at] = columnIm[row];
+    }
+  }
+
+  // The sinc envelope is separable, so tabulate it once per axis.
   const scale = 1 / (N * N);
-  const out = new Float64Array(5 * (2 * span + 1) ** 2);
-  let used = 0;
+  const sincAxis = new Float64Array(width);
+  for (let k = 0; k < width; k++) sincAxis[k] = sinc((k - span) * df * pitch);
+
   let strongest = 0;
   for (let ky = -span; ky <= span; ky++) {
     const fy = ky * df;
+    const sy = sincAxis[ky + span];
+    const rowBase = wrapIndex(ky) * N;
     for (let kx = -span; kx <= span; kx++) {
       const fx = kx * df;
-      const free = fMax * fMax - fx * fx - fy * fy;
-      if (free <= 0) continue;
-      const envelope = sinc(fx * pitch) * sinc(fy * pitch) * scale;
-      const a = wrapIndex(ky) * N + wrapIndex(kx);
+      if (fMax * fMax - fx * fx - fy * fy <= 0) continue;
+      const envelope = sincAxis[kx + span] * sy * scale;
+      const a = rowBase + wrapIndex(kx);
       const ar = re[a] * envelope;
       const ai = im[a] * envelope;
       const power = ar * ar + ai * ai;
       if (power > strongest) strongest = power;
-      if (power === 0) continue;
-      out[used++] = kx;
-      out[used++] = ky;
-      out[used++] = ar;
-      out[used++] = ai;
-      out[used++] = TAU * Math.sqrt(free);
     }
   }
   const cut = strongest * CULL * CULL;
+
   let count = 0;
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (let i = 0; i < used; i += 5) {
-    if (out[i + 2] ** 2 + out[i + 3] ** 2 < cut) continue;
-    count++;
-    minX = Math.min(minX, out[i]); maxX = Math.max(maxX, out[i]);
-    minY = Math.min(minY, out[i + 1]); maxY = Math.max(maxY, out[i + 1]);
+  for (let ky = -span; ky <= span; ky++) {
+    const fy = ky * df;
+    const sy = sincAxis[ky + span];
+    const rowBase = wrapIndex(ky) * N;
+    for (let kx = -span; kx <= span; kx++) {
+      const fx = kx * df;
+      if (fMax * fMax - fx * fx - fy * fy <= 0) continue;
+      const envelope = sincAxis[kx + span] * sy * scale;
+      const a = rowBase + wrapIndex(kx);
+      const ar = re[a] * envelope;
+      const ai = im[a] * envelope;
+      if (ar * ar + ai * ai === 0 || ar ** 2 + ai ** 2 < cut) continue;
+      count++;
+      if (kx < minX) minX = kx;
+      if (kx > maxX) maxX = kx;
+      if (ky < minY) minY = ky;
+      if (ky > maxY) maxY = ky;
+    }
   }
+
   const spectrum: Spectrum = {
     key, wavelength: p.wavelength, df,
     fx0: minX * df,
@@ -297,13 +340,25 @@ export function deviceSpectrum(p: FarFieldInput): Spectrum {
     re: new Float64Array(count), im: new Float64Array(count), kz: new Float64Array(count),
   };
   let n = 0;
-  for (let i = 0; i < used; i += 5) {
-    if (out[i + 2] ** 2 + out[i + 3] ** 2 < cut) continue;
-    spectrum.ix[n] = out[i] - minX;
-    spectrum.iy[n] = out[i + 1] - minY;
-    spectrum.re[n] = out[i + 2];
-    spectrum.im[n] = out[i + 3];
-    spectrum.kz[n++] = out[i + 4];
+  for (let ky = -span; ky <= span; ky++) {
+    const fy = ky * df;
+    const sy = sincAxis[ky + span];
+    const rowBase = wrapIndex(ky) * N;
+    for (let kx = -span; kx <= span; kx++) {
+      const fx = kx * df;
+      const free = fMax * fMax - fx * fx - fy * fy;
+      if (free <= 0) continue;
+      const envelope = sincAxis[kx + span] * sy * scale;
+      const a = rowBase + wrapIndex(kx);
+      const ar = re[a] * envelope;
+      const ai = im[a] * envelope;
+      if (ar * ar + ai * ai === 0 || ar ** 2 + ai ** 2 < cut) continue;
+      spectrum.ix[n] = kx - minX;
+      spectrum.iy[n] = ky - minY;
+      spectrum.re[n] = ar;
+      spectrum.im[n] = ai;
+      spectrum.kz[n++] = TAU * Math.sqrt(free);
+    }
   }
   spectrumCache.unshift(spectrum);
   spectrumCache.length = Math.min(spectrumCache.length, SPECTRUM_SLOTS);
