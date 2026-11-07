@@ -46,6 +46,24 @@ void main() {
 const FIELD_ROWS = 384;
 
 /** Field on the transverse plane z = probeZ. */
+/** Solve window for a panel of the given pixel size; null while the panel has no area (hidden tab). */
+export function xyFieldRequest(state: OpticsState, width: number, height: number): FieldRequest | null {
+  if (!(width > 0) || !(height > 0)) return null;
+  const aspect = width / height;
+  const span = 25 / Math.max(0.2, state.xyZoom || 1);
+  const wide = aspect >= 1 ? aspect : 1 / aspect;
+  const nLong = Math.min(900, Math.round(FIELD_ROWS * wide));
+  return {
+    kind: 'xy',
+    device: deviceFromState(state),
+    z: Math.max(0.02, state.probeZ ?? 25),
+    halfX: aspect >= 1 ? span * aspect : span,
+    halfV: aspect >= 1 ? span : span / aspect,
+    nx: aspect >= 1 ? nLong : FIELD_ROWS,
+    nv: aspect >= 1 ? FIELD_ROWS : nLong,
+  };
+}
+
 export class XYProfileRenderer extends FieldCanvas {
   private showGrid = true;
 
@@ -53,20 +71,8 @@ export class XYProfileRenderer extends FieldCanvas {
     super(canvas, FS_SOURCE, ['uXyZoom', 'uShowGrid', 'uFieldWindow']);
   }
 
-  protected fieldRequest(state: OpticsState): FieldRequest {
-    const aspect = this.canvas.clientWidth / Math.max(1, this.canvas.clientHeight);
-    const span = 25 / Math.max(0.2, state.xyZoom || 1);
-    const wide = aspect >= 1 ? aspect : 1 / aspect;
-    const nLong = Math.min(900, Math.round(FIELD_ROWS * wide));
-    return {
-      kind: 'xy',
-      device: deviceFromState(state),
-      z: Math.max(0.02, state.probeZ ?? 25),
-      halfX: aspect >= 1 ? span * aspect : span,
-      halfV: aspect >= 1 ? span : span / aspect,
-      nx: aspect >= 1 ? nLong : FIELD_ROWS,
-      nv: aspect >= 1 ? FIELD_ROWS : nLong,
-    };
+  protected fieldRequest(state: OpticsState): FieldRequest | null {
+    return xyFieldRequest(state, this.canvas.clientWidth, this.canvas.clientHeight);
   }
 
   protected setUniforms(gl: WebGL2RenderingContext, state: OpticsState): void {
@@ -78,6 +84,7 @@ export class XYProfileRenderer extends FieldCanvas {
 
   public toggleGrid(): boolean {
     this.showGrid = !this.showGrid;
+    this.requestRender();
     return this.showGrid;
   }
 }

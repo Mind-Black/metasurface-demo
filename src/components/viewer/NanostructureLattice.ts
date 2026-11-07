@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { opticsStore, OpticsState } from '@/lib/store/useOpticsStore';
 import { targetPhaseToDiameter } from '@/lib/optics/rcwaLut';
-import { aperturePhase } from '@/lib/optics/farField';
+import { aperturePhase, FarFieldInput } from '@/lib/optics/farField';
 
 export function latticePositions(diameter: number, pitch: number): Array<[number, number]> {
   const radius = diameter / 2;
@@ -18,14 +18,19 @@ export function latticePositions(diameter: number, pitch: number): Array<[number
   return positions;
 }
 
-export function latticeTargetPhase(state: OpticsState, x: number, y: number): number {
-  const phase = aperturePhase({ ...state, ...state.activeGradients }, x, y);
+/** Device description for `aperturePhase`; build once per rebuild rather than once per pillar. */
+export function latticePhaseInput(state: OpticsState): FarFieldInput {
+  return { ...state, ...state.activeGradients };
+}
+
+export function latticeTargetPhase(state: OpticsState, x: number, y: number, input = latticePhaseInput(state)): number {
+  const phase = aperturePhase(input, x, y);
   return ((phase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
 }
 
 /** Geometry is designed at λ0; changing the illumination must not resize it. */
-export function latticePillarGeometry(state: OpticsState, x: number, y: number) {
-  const targetPhase = latticeTargetPhase(state, x, y);
+export function latticePillarGeometry(state: OpticsState, x: number, y: number, input = latticePhaseInput(state)) {
+  const targetPhase = latticeTargetPhase(state, x, y, input);
   const diameterNm = targetPhaseToDiameter(targetPhase, state.designWavelength * 1000,
     state.heightNm, state.pitchNm, state.material);
   return { targetPhase, diameterNm };
@@ -34,6 +39,42 @@ export function latticePillarGeometry(state: OpticsState, x: number, y: number) 
 /** Phase-map pixel in a top view: screen up is physical +y. */
 export function latticePhaseMapCoordinates(row: number, col: number, size: number, diameter: number): [number, number] {
   return [((col + 0.5) / size - 0.5) * diameter, (0.5 - (row + 0.5) / size) * diameter];
+}
+
+/** CSS `hsl(h, 85%, 52%)` as sRGB bytes written into `out[at..at+2]`. */
+export function phaseColor(hueDegrees: number, out: Uint8ClampedArray, at: number): void {
+  const h = (((hueDegrees % 360) + 360) % 360) / 60;
+  const lightness = 0.52;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * 0.85;
+  const x = chroma * (1 - Math.abs((h % 2) - 1));
+  const m = lightness - chroma / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 1) { r = chroma; g = x; }
+  else if (h < 2) { r = x; g = chroma; }
+  else if (h < 3) { g = chroma; b = x; }
+  else if (h < 4) { g = x; b = chroma; }
+  else if (h < 5) { r = x; b = chroma; }
+  else { r = chroma; b = x; }
+  out[at] = Math.round((r + m) * 255);
+  out[at + 1] = Math.round((g + m) * 255);
+  out[at + 2] = Math.round((b + m) * 255);
+}
+
+/** RGBA top view of the target phase over the aperture; pixels outside it are transparent. */
+export function phaseMapPixels(state: OpticsState, size: number): Uint8ClampedArray<ArrayBuffer> {
+  const pixels = new Uint8ClampedArray(new ArrayBuffer(size * size * 4));
+  const input = latticePhaseInput(state);
+  const radiusSquared = state.diameter * state.diameter / 4;
+  for (let row = 0; row < size; row++) {
+    for (let col = 0; col < size; col++) {
+      const [x, y] = latticePhaseMapCoordinates(row, col, size, state.diameter);
+      if (x * x + y * y > radiusSquared) continue;
+      const at = (row * size + col) * 4;
+      phaseColor(latticeTargetPhase(state, x, y, input) / (2 * Math.PI) * 360, pixels, at);
+      pixels[at + 3] = 255;
+    }
+  }
+  return pixels;
 }
 
 export class NanostructureLatticeViewer {
@@ -50,6 +91,10 @@ export class NanostructureLatticeViewer {
   private needsRender: boolean = true;
   private phaseMapKey = '';
   private phaseMapMask: number[][] | null = null;
+  private visible = true;
+  /** The store changed; rebuild once on the next frame instead of once per notification. */
+  private rebuildPending = false;
+  private intersection: IntersectionObserver | null = null;
 
   private readonly MAX_GRID_SIZE = 201; // 50 µm aperture at 250 nm pitch
   private dummy = new THREE.Object3D();
@@ -63,7 +108,7 @@ export class NanostructureLatticeViewer {
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
       antialias: true,
-      alpha: true,
+      alpha: false,
       powerPreference: 'high-performance'
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -99,8 +144,20 @@ export class NanostructureLatticeViewer {
 
     // Subscribe to store updates
     this.unsubscribe = opticsStore.subscribe(() => {
-      this.updateLattice();
+      this.rebuildPending = true;
     });
+
+    if (typeof IntersectionObserver !== 'undefined') {
+      this.intersection = new IntersectionObserver((entries) => {
+        const visible = entries[entries.length - 1].isIntersecting;
+        if (visible === this.visible) return;
+        this.visible = visible;
+        if (!visible) return;
+        this.resize();
+        this.needsRender = true;
+      });
+      this.intersection.observe(container);
+    }
 
     this.start();
   }
@@ -124,10 +181,9 @@ export class NanostructureLatticeViewer {
     const substrateMat = new THREE.MeshPhysicalMaterial({
       color: 0x94a3b8,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.15,
       roughness: 0.1,
       metalness: 0.05,
-      transmission: 0.7,
       ior: 1.45 // Fused silica
     });
     this.substrate = new THREE.Mesh(substrateGeom, substrateMat);
@@ -148,6 +204,11 @@ export class NanostructureLatticeViewer {
 
     // Circular nanopillars encode the phase for every device mode.
     const cylGeom = new THREE.CylinderGeometry(1, 1, 1, 16);
+    // The lower cap sits on the substrate and is never seen, so drop it: a quarter fewer triangles.
+    // CylinderGeometry emits the torso, then the top cap, then the bottom cap.
+    const bottomCap = cylGeom.groups[2];
+    cylGeom.setIndex(Array.from(cylGeom.index!.array.slice(0, bottomCap.start)));
+    cylGeom.groups.length = 2;
     cylGeom.rotateX(Math.PI / 2); // Orient along Z axis
     this.pillarMesh = new THREE.InstancedMesh(cylGeom, mat, count);
     this.pillarMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -180,9 +241,10 @@ export class NanostructureLatticeViewer {
       this.scene.add(this.pillarMesh);
     }
     const targetMesh = this.pillarMesh;
+    const phaseInput = latticePhaseInput(state);
     let index = 0;
     for (const [x, y] of positions) {
-      const sample = latticePillarGeometry(state, x, y);
+      const sample = latticePillarGeometry(state, x, y, phaseInput);
       this.dummy.position.set(x, y, heightUm / 2);
       this.dummy.scale.set(sample.diameterNm / 2000, sample.diameterNm / 2000, heightUm);
       this.dummy.rotation.set(0, 0, 0);
@@ -194,8 +256,16 @@ export class NanostructureLatticeViewer {
     }
     targetMesh.count = index;
     targetMesh.computeBoundingSphere();
+    // Upload only the instances in use; the buffers are sized for the largest aperture.
+    targetMesh.instanceMatrix.clearUpdateRanges();
+    targetMesh.instanceMatrix.addUpdateRange(0, index * 16);
     targetMesh.instanceMatrix.needsUpdate = true;
-    if (targetMesh.instanceColor) targetMesh.instanceColor.needsUpdate = true;
+    if (targetMesh.instanceColor) {
+      targetMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      targetMesh.instanceColor.clearUpdateRanges();
+      targetMesh.instanceColor.addUpdateRange(0, index * 3);
+      targetMesh.instanceColor.needsUpdate = true;
+    }
     this.updatePhaseMap(state);
     this.phaseMapKey = key;
     this.phaseMapMask = state.cghPhaseMask;
@@ -207,16 +277,7 @@ export class NanostructureLatticeViewer {
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
     const size = canvas.width;
-    ctx.clearRect(0, 0, size, size);
-    for (let row = 0; row < size; row++) {
-      for (let col = 0; col < size; col++) {
-        const [x, y] = latticePhaseMapCoordinates(row, col, size, state.diameter);
-        if (x * x + y * y > state.diameter * state.diameter / 4) continue;
-        const phase = latticeTargetPhase(state, x, y);
-        ctx.fillStyle = `hsl(${phase / (2 * Math.PI) * 360}, 85%, 52%)`;
-        ctx.fillRect(col, row, 1, 1);
-      }
-    }
+    ctx.putImageData(new ImageData(phaseMapPixels(state, size), size, size), 0, 0);
   }
 
   public resetCamera(): void {
@@ -240,8 +301,12 @@ export class NanostructureLatticeViewer {
     if (this.animId !== null) return;
     this.needsRender = true;
     const animate = () => {
+      if (this.rebuildPending && this.visible) {
+        this.rebuildPending = false;
+        this.updateLattice();
+      }
       const controlsChanged = this.controls.update();
-      if (controlsChanged || this.needsRender) {
+      if (this.visible && (controlsChanged || this.needsRender)) {
         this.renderer.render(this.scene, this.camera);
         this.needsRender = false;
       }
@@ -259,6 +324,8 @@ export class NanostructureLatticeViewer {
 
   public destroy(): void {
     this.stop();
+    this.intersection?.disconnect();
+    this.intersection = null;
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = null;

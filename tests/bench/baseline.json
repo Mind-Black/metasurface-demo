@@ -1,0 +1,21 @@
+{
+  "D30/532 lens | cold spectrum": 256.27,
+  "D30/532 lens | XZ 900x256": 185.09,
+  "D30/532 lens | XY 900x384": 210.12,
+  "D30/532 lens | overview 256x128": 100.94,
+  "D30/532 lens | far field 256^2": 21.13,
+  "D50/400 lens | cold spectrum": 267.57,
+  "D50/400 lens | XZ 900x256": 336.77,
+  "D50/400 lens | XY 900x384": 406.65,
+  "D50/400 lens | overview 256x128": 174.8,
+  "D50/400 lens | far field 256^2": 45.61,
+  "D30 vortex+deflect | cold spectrum": 249.61,
+  "D30 vortex+deflect | XZ 900x256": 149.85,
+  "D30 vortex+deflect | XY 900x384": 206.89,
+  "D30 vortex+deflect | overview 256x128": 82.03,
+  "D30 vortex+deflect | far field 256^2": 22.66,
+  "hologram D30 | cold spectrum": 248.97,
+  "hologram D30 | XY 384x384 cloned mask": 413.79,
+  "GS | 15 iterations": 11.25,
+  "GS | 500 iterations": 366.12
+}

@@ -74,6 +74,18 @@ export abstract class FieldCanvas {
   private vao: WebGLVertexArrayObject | null = null;
   private texture: WebGLTexture | null = null;
   private animFrameId: number | null = null;
+  private running = false;
+  /** Something changed since the last draw. Idle panels draw only when this is set. */
+  private dirty = true;
+  /** Scrolled into (or near) view and not in a hidden tab. */
+  private visible = true;
+  private lastWidth = 0;
+  private lastHeight = 0;
+  /** While a panel is being resized the request key changes every frame; wait for it to settle. */
+  private settleUntil = 0;
+  private unsubscribe: (() => void) | null = null;
+  private intersection: IntersectionObserver | null = null;
+  private resizeObserver: ResizeObserver | null = null;
   private startTime = performance.now();
   private currentTime = 0;
   private requestedKey = '';
@@ -83,11 +95,11 @@ export abstract class FieldCanvas {
     this.initWebGL(fragmentSource, uniforms);
   }
 
-  protected abstract fieldRequest(state: OpticsState): FieldRequest;
+  protected abstract fieldRequest(state: OpticsState): FieldRequest | null;
   protected abstract setUniforms(gl: WebGL2RenderingContext, state: OpticsState): void;
 
   private initWebGL(fragmentSource: string, uniforms: string[]): void {
-    const gl = this.canvas.getContext('webgl2', { antialias: true, powerPreference: 'high-performance' });
+    const gl = this.canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'default' });
     if (!gl) {
       console.error('WebGL2 not supported on this device.');
       return;
@@ -141,6 +153,7 @@ export abstract class FieldCanvas {
 
   private syncField(state: OpticsState): void {
     const request = this.fieldRequest(state);
+    if (!request) return;
     const { device, ...view } = request;
     const key = `${deviceKey(device)}#${JSON.stringify(view)}`;
     if (key === this.requestedKey) return;
@@ -151,6 +164,7 @@ export abstract class FieldCanvas {
       gl.bindTexture(gl.TEXTURE_2D, this.texture);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, field.nx, field.ny, 0, gl.RG, gl.FLOAT, field.data);
       this.shown = solved;
+      this.requestRender();
     });
   }
 
@@ -166,29 +180,89 @@ export abstract class FieldCanvas {
     }
   }
 
-  public start(): void {
-    if (this.animFrameId !== null) return;
-    const loop = (time: number) => {
+  /** The carrier phase advances only while playing, and |E|² does not depend on it at all. */
+  private isAnimating(): boolean {
+    const state = opticsStore.getState();
+    return state.isPlaying && state.renderMode !== 'intensity';
+  }
+
+  /** Draw on the next animation frame. Calls made before that frame share the one draw. */
+  public requestRender(): void {
+    this.dirty = true;
+    this.schedule();
+  }
+
+  private schedule(): void {
+    if (!this.running || this.animFrameId !== null) return;
+    this.animFrameId = requestAnimationFrame(this.frame);
+  }
+
+  private frame = (time: number): void => {
+    this.animFrameId = null;
+    // Off-screen and hidden panels neither draw nor request solves; scrolling back reschedules them.
+    if (!this.visible) return;
+    const animating = this.isAnimating();
+    if (animating || this.dirty) {
+      this.dirty = false;
       this.render(time);
-      this.animFrameId = requestAnimationFrame(loop);
-    };
-    this.animFrameId = requestAnimationFrame(loop);
+    }
+    if (animating) this.schedule();
+  };
+
+  public start(): void {
+    if (this.running) return;
+    this.running = true;
+    this.unsubscribe = opticsStore.subscribe(() => this.requestRender());
+    if (typeof IntersectionObserver !== 'undefined') {
+      // A margin starts the solve shortly before a panel scrolls into view.
+      this.intersection = new IntersectionObserver((entries) => {
+        const visible = entries[entries.length - 1].isIntersecting;
+        if (visible === this.visible) return;
+        this.visible = visible;
+        if (visible) this.requestRender();
+      }, { rootMargin: '200px' });
+      this.intersection.observe(this.canvas);
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.requestRender());
+      this.resizeObserver.observe(this.canvas);
+    }
+    this.requestRender();
   }
 
   public stop(): void {
+    this.running = false;
     if (this.animFrameId !== null) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
     }
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    this.intersection?.disconnect();
+    this.intersection = null;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
   }
 
   public render(timestamp?: number): void {
     const gl = this.gl;
     if (!gl || !this.program || !this.vao) return;
+    if (this.canvas.clientWidth === 0 || this.canvas.clientHeight === 0) return;
     const state = opticsStore.getState();
     if (state.isPlaying && timestamp !== undefined) this.currentTime = (timestamp - this.startTime) * 0.001;
+    const width = this.canvas.clientWidth;
+    const height = this.canvas.clientHeight;
+    if (width !== this.lastWidth || height !== this.lastHeight) {
+      // The first size, and any size with no picture to stretch yet, solves immediately.
+      if (this.lastWidth !== 0 && this.shown) {
+        this.settleUntil = performance.now() + 120;
+        setTimeout(() => this.requestRender(), 130);
+      }
+      this.lastWidth = width;
+      this.lastHeight = height;
+    }
     this.resize();
-    this.syncField(state);
+    if (performance.now() >= this.settleUntil) this.syncField(state);
 
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);

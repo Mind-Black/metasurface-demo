@@ -18,11 +18,13 @@ export interface FieldReply {
   request: FieldRequest;
   field?: FieldWindow;
   far?: FarFieldResult;
+  error?: string;
 }
 
 type Callback = (reply: FieldReply) => void;
 
 export function deviceFromState(state: OpticsState): FarFieldInput {
+  const gradients = state.activeGradients;
   return {
     wavelength: state.wavelength,
     designWavelength: state.designWavelength,
@@ -30,8 +32,9 @@ export function deviceFromState(state: OpticsState): FarFieldInput {
     diameter: state.diameter,
     deflectionAngle: state.deflectionAngle,
     topologicalCharge: state.topologicalCharge,
-    ...state.activeGradients,
-    cghPhaseMask: state.cghPhaseMask,
+    ...gradients,
+    // The mask is only read in hologram mode; leaving it out saves cloning it into the worker.
+    cghPhaseMask: gradients.hologram ? state.cghPhaseMask : null,
   };
 }
 
@@ -40,6 +43,11 @@ class FieldClient {
   private worker: Worker | null = null;
   private running = new Map<FieldKind, Callback>();
   private waiting = new Map<FieldKind, { request: FieldRequest; callback: Callback }>();
+
+  /** Creates the worker ahead of the first request. */
+  warm(): void {
+    this.getWorker();
+  }
 
   request(request: FieldRequest, callback: Callback): void {
     if (this.running.has(request.kind)) {

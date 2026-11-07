@@ -1,3 +1,4 @@
+import { fft } from './fft';
 /**
  * Modified Gerchberg-Saxton (GS) Phase Retrieval for Phase-Only Computer-Generated Holography (CGH)
  */
@@ -30,7 +31,99 @@ export function hologramPupilSamples(mask: number[][], diameter: number): Array<
  * 2D Discrete Fourier Transform (and inverse) on N x N complex arrays.
  * For N = 32, 2D DFT runs in ~2ms.
  */
-const dftKernels = new Map<number, { cos: Float64Array; sin: Float64Array }>();
+const dftKernels = new Map<number, { cos: Float64Array; sin: Float64Array; negSin: Float64Array }>();
+
+function dftKernel(N: number) {
+  let kernel = dftKernels.get(N);
+  if (!kernel) {
+    kernel = { cos: new Float64Array(N * N), sin: new Float64Array(N * N), negSin: new Float64Array(N * N) };
+    for (let k = 0; k < N; k++) for (let n = 0; n < N; n++) {
+      const angle = 2 * Math.PI * k * n / N;
+      kernel.cos[k * N + n] = Math.cos(angle);
+      kernel.sin[k * N + n] = Math.sin(angle);
+      kernel.negSin[k * N + n] = -Math.sin(angle);
+    }
+    dftKernels.set(N, kernel);
+  }
+  return kernel;
+}
+
+/** Radix-2 version of dftFlat for power-of-two N; the inverse is conj(DFT(conj(x))) / N². */
+function dftFlatFft(
+  reIn: Float64Array, imIn: Float64Array, N: number, inverse: boolean,
+  outRe: Float64Array, outIm: Float64Array
+): void {
+  outRe.set(reIn);
+  if (inverse) for (let i = 0; i < N * N; i++) outIm[i] = -imIn[i];
+  else outIm.set(imIn);
+  for (let r = 0; r < N; r++) fft(outRe, outIm, N, r * N, 1);
+  for (let c = 0; c < N; c++) fft(outRe, outIm, N, c, N);
+  if (inverse) {
+    const norm = 1 / (N * N);
+    for (let i = 0; i < N * N; i++) {
+      outRe[i] *= norm;
+      outIm[i] = -outIm[i] * norm;
+    }
+  }
+}
+
+/**
+ * 2D DFT on flat row-major N x N arrays, written into outRe/outIm. The sums run in the same order
+ * as the nested-array version, so results are identical; only the allocation and copying are gone.
+ * `tempRe`/`tempIm` are N x N scratch.
+ */
+function dftFlat(
+  reIn: Float64Array, imIn: Float64Array, N: number, inverse: boolean,
+  outRe: Float64Array, outIm: Float64Array, tempRe: Float64Array, tempIm: Float64Array
+): void {
+  if (N >= 2 && (N & (N - 1)) === 0) {
+    dftFlatFft(reIn, imIn, N, inverse, outRe, outIm);
+    return;
+  }
+  const kernel = dftKernel(N);
+  const cos = kernel.cos;
+  const sin = inverse ? kernel.sin : kernel.negSin;
+  const norm = inverse ? 1 / (N * N) : 1;
+
+  // 1D DFT along rows
+  for (let r = 0; r < N; r++) {
+    const rowBase = r * N;
+    for (let k = 0; k < N; k++) {
+      const kBase = k * N;
+      let sumRe = 0;
+      let sumIm = 0;
+      for (let n = 0; n < N; n++) {
+        const cosA = cos[kBase + n];
+        const sinA = sin[kBase + n];
+        const re = reIn[rowBase + n];
+        const im = imIn[rowBase + n];
+        sumRe += re * cosA - im * sinA;
+        sumIm += re * sinA + im * cosA;
+      }
+      tempRe[rowBase + k] = sumRe;
+      tempIm[rowBase + k] = sumIm;
+    }
+  }
+
+  // 1D DFT along columns
+  for (let c = 0; c < N; c++) {
+    for (let k = 0; k < N; k++) {
+      const kBase = k * N;
+      let sumRe = 0;
+      let sumIm = 0;
+      for (let n = 0; n < N; n++) {
+        const cosA = cos[kBase + n];
+        const sinA = sin[kBase + n];
+        const re = tempRe[n * N + c];
+        const im = tempIm[n * N + c];
+        sumRe += re * cosA - im * sinA;
+        sumIm += re * sinA + im * cosA;
+      }
+      outRe[k * N + c] = sumRe * norm;
+      outIm[k * N + c] = sumIm * norm;
+    }
+  }
+}
 
 export function dft2d(
   reIn: number[][],
@@ -38,61 +131,17 @@ export function dft2d(
   inverse: boolean = false
 ): { re: number[][]; im: number[][] } {
   const N = reIn.length;
-  const reOut = Array.from({ length: N }, () => new Float64Array(N));
-  const imOut = Array.from({ length: N }, () => new Float64Array(N));
-
-  const sign = inverse ? 1 : -1;
-  let kernel = dftKernels.get(N);
-  if (!kernel) {
-    kernel = { cos: new Float64Array(N * N), sin: new Float64Array(N * N) };
-    for (let k = 0; k < N; k++) for (let n = 0; n < N; n++) {
-      const angle = 2 * Math.PI * k * n / N;
-      kernel.cos[k * N + n] = Math.cos(angle);
-      kernel.sin[k * N + n] = Math.sin(angle);
-    }
-    dftKernels.set(N, kernel);
+  const flatRe = new Float64Array(N * N);
+  const flatIm = new Float64Array(N * N);
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    flatRe[r * N + c] = reIn[r][c];
+    flatIm[r * N + c] = imIn[r][c];
   }
-
-  // 1D DFT along rows
-  const tempRe = Array.from({ length: N }, () => new Float64Array(N));
-  const tempIm = Array.from({ length: N }, () => new Float64Array(N));
-
-  for (let r = 0; r < N; r++) {
-    for (let k = 0; k < N; k++) {
-      let sumRe = 0;
-      let sumIm = 0;
-      for (let n = 0; n < N; n++) {
-        const cosA = kernel.cos[k * N + n];
-        const sinA = sign * kernel.sin[k * N + n];
-        sumRe += reIn[r][n] * cosA - imIn[r][n] * sinA;
-        sumIm += reIn[r][n] * sinA + imIn[r][n] * cosA;
-      }
-      tempRe[r][k] = sumRe;
-      tempIm[r][k] = sumIm;
-    }
-  }
-
-  // 1D DFT along columns
-  for (let c = 0; c < N; c++) {
-    for (let k = 0; k < N; k++) {
-      let sumRe = 0;
-      let sumIm = 0;
-      for (let n = 0; n < N; n++) {
-        const cosA = kernel.cos[k * N + n];
-        const sinA = sign * kernel.sin[k * N + n];
-        sumRe += tempRe[n][c] * cosA - tempIm[n][c] * sinA;
-        sumIm += tempRe[n][c] * sinA + tempIm[n][c] * cosA;
-      }
-      const norm = inverse ? 1 / (N * N) : 1;
-      reOut[k][c] = sumRe * norm;
-      imOut[k][c] = sumIm * norm;
-    }
-  }
-
-  return {
-    re: reOut.map((row) => Array.from(row)),
-    im: imOut.map((row) => Array.from(row))
-  };
+  const outRe = new Float64Array(N * N);
+  const outIm = new Float64Array(N * N);
+  dftFlat(flatRe, flatIm, N, inverse, outRe, outIm, new Float64Array(N * N), new Float64Array(N * N));
+  const rows = (flat: Float64Array) => Array.from({ length: N }, (_, r) => Array.from(flat.subarray(r * N, (r + 1) * N)));
+  return { re: rows(outRe), im: rows(outIm) };
 }
 
 /**
@@ -177,77 +226,71 @@ export function runGerchbergSaxton(
   }
   if (!Number.isInteger(iterations) || iterations < 1) throw new RangeError('Iterations must be a positive integer.');
 
-  // 1. Initial metasurface field: circular pupil with reproducible random phase
-  let metaRe = Array.from({ length: N }, () => new Float64Array(N));
-  let metaIm = Array.from({ length: N }, () => new Float64Array(N));
-  const aperture = Array.from({ length: N }, (_, r) =>
-    Array.from({ length: N }, (_, c) => Math.hypot(r + 0.5 - N / 2, c + 0.5 - N / 2) <= N / 2 ? 1 : 0));
+  // Everything runs on flat row-major arrays: no per-iteration allocation or copying.
+  const metaRe = new Float64Array(N * N);
+  const metaIm = new Float64Array(N * N);
+  const aperture = new Float64Array(N * N);
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      aperture[r * N + c] = Math.hypot(r + 0.5 - N / 2, c + 0.5 - N / 2) <= N / 2 ? 1 : 0;
+    }
+  }
   // A fixed initialization makes target/iteration comparisons reproducible.
   let seed = 42;
-
+  // 1. Initial metasurface field: circular pupil with reproducible random phase
   for (let r = 0; r < N; r++) {
     for (let c = 0; c < N; c++) {
       seed = (Math.imul(1664525, seed) + 1013904223) >>> 0;
       const randPhase = (seed / 4294967296) * 2 * Math.PI;
-      metaRe[r][c] = aperture[r][c] * Math.cos(randPhase);
-      metaIm[r][c] = aperture[r][c] * Math.sin(randPhase);
+      metaRe[r * N + c] = aperture[r * N + c] * Math.cos(randPhase);
+      metaIm[r * N + c] = aperture[r * N + c] * Math.sin(randPhase);
     }
   }
 
   // Image center = floor(N/2); image up is +y. Map explicitly into
   // unshifted Fourier indices, including odd grids (fftshift != ifftshift).
   const half = Math.floor(N / 2);
-  const shiftedTarget = Array.from({ length: N }, (_, ky) =>
-    Array.from({ length: N }, (_, kx) => targetAmplitude[(half - ky + N) % N][(kx + half) % N]));
+  const shiftedTarget = new Float64Array(N * N);
+  for (let ky = 0; ky < N; ky++) {
+    for (let kx = 0; kx < N; kx++) shiftedTarget[ky * N + kx] = targetAmplitude[(half - ky + N) % N][(kx + half) % N];
+  }
+
+  const farRe = new Float64Array(N * N);
+  const farIm = new Float64Array(N * N);
+  const constrainedRe = new Float64Array(N * N);
+  const constrainedIm = new Float64Array(N * N);
+  const backRe = new Float64Array(N * N);
+  const backIm = new Float64Array(N * N);
+  const tempRe = new Float64Array(N * N);
+  const tempIm = new Float64Array(N * N);
 
   for (let iter = 0; iter < iterations; iter++) {
     // Forward propagation to far-field (Fourier Transform)
-    const farField = dft2d(
-      metaRe.map((row) => Array.from(row)),
-      metaIm.map((row) => Array.from(row)),
-      false
-    );
+    dftFlat(metaRe, metaIm, N, false, farRe, farIm, tempRe, tempIm);
 
     // Apply target amplitude constraint in far-field while retaining computed phase
-    const farConstrainedRe = Array.from({ length: N }, () => new Float64Array(N));
-    const farConstrainedIm = Array.from({ length: N }, () => new Float64Array(N));
-
-    for (let r = 0; r < N; r++) {
-      for (let c = 0; c < N; c++) {
-        const re = farField.re[r][c];
-        const im = farField.im[r][c];
-        const mag = Math.sqrt(re * re + im * im) || 1e-9;
-        const targetA = shiftedTarget[r][c];
-        farConstrainedRe[r][c] = (re / mag) * targetA;
-        farConstrainedIm[r][c] = (im / mag) * targetA;
-      }
+    for (let i = 0; i < N * N; i++) {
+      const re = farRe[i];
+      const im = farIm[i];
+      const mag = Math.sqrt(re * re + im * im) || 1e-9;
+      const targetA = shiftedTarget[i];
+      constrainedRe[i] = (re / mag) * targetA;
+      constrainedIm[i] = (im / mag) * targetA;
     }
 
     // Inverse propagation back to metasurface plane
-    const metaBack = dft2d(
-      farConstrainedRe.map((row) => Array.from(row)),
-      farConstrainedIm.map((row) => Array.from(row)),
-      true
-    );
+    dftFlat(constrainedRe, constrainedIm, N, true, backRe, backIm, tempRe, tempIm);
 
     // Apply metasurface phase-only constraint: unit amplitude A0 = 1
-    for (let r = 0; r < N; r++) {
-      for (let c = 0; c < N; c++) {
-        const re = metaBack.re[r][c];
-        const im = metaBack.im[r][c];
-        const phase = Math.atan2(im, re);
-        metaRe[r][c] = aperture[r][c] * Math.cos(phase);
-        metaIm[r][c] = aperture[r][c] * Math.sin(phase);
-      }
+    for (let i = 0; i < N * N; i++) {
+      const phase = Math.atan2(backIm[i], backRe[i]);
+      metaRe[i] = aperture[i] * Math.cos(phase);
+      metaIm[i] = aperture[i] * Math.sin(phase);
     }
   }
 
   // Final forward propagation to evaluate reconstruction
-  const finalFar = dft2d(
-    metaRe.map((row) => Array.from(row)),
-    metaIm.map((row) => Array.from(row)),
-    false
-  );
+  dftFlat(metaRe, metaIm, N, false, farRe, farIm, tempRe, tempIm);
 
   const phaseMask: number[][] = Array.from({ length: N }, () => new Array(N));
   const rawRecon: number[][] = Array.from({ length: N }, () => new Array(N));
@@ -255,12 +298,11 @@ export function runGerchbergSaxton(
 
   for (let r = 0; r < N; r++) {
     for (let c = 0; c < N; c++) {
-      const p = Math.atan2(metaIm[r][c], metaRe[r][c]);
+      const i = r * N + c;
+      const p = Math.atan2(metaIm[i], metaRe[i]);
       phaseMask[r][c] = ((p % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
 
-      const fRe = finalFar.re[r][c];
-      const fIm = finalFar.im[r][c];
-      const intensity = fRe * fRe + fIm * fIm;
+      const intensity = farRe[i] * farRe[i] + farIm[i] * farIm[i];
       rawRecon[r][c] = intensity;
       if (intensity > maxI) maxI = intensity;
     }
