@@ -1,3 +1,4 @@
+import { fft } from './fft';
 /**
  * Modified Gerchberg-Saxton (GS) Phase Retrieval for Phase-Only Computer-Generated Holography (CGH)
  */
@@ -47,6 +48,25 @@ function dftKernel(N: number) {
   return kernel;
 }
 
+/** Radix-2 version of dftFlat for power-of-two N; the inverse is conj(DFT(conj(x))) / N². */
+function dftFlatFft(
+  reIn: Float64Array, imIn: Float64Array, N: number, inverse: boolean,
+  outRe: Float64Array, outIm: Float64Array
+): void {
+  outRe.set(reIn);
+  if (inverse) for (let i = 0; i < N * N; i++) outIm[i] = -imIn[i];
+  else outIm.set(imIn);
+  for (let r = 0; r < N; r++) fft(outRe, outIm, N, r * N, 1);
+  for (let c = 0; c < N; c++) fft(outRe, outIm, N, c, N);
+  if (inverse) {
+    const norm = 1 / (N * N);
+    for (let i = 0; i < N * N; i++) {
+      outRe[i] *= norm;
+      outIm[i] = -outIm[i] * norm;
+    }
+  }
+}
+
 /**
  * 2D DFT on flat row-major N x N arrays, written into outRe/outIm. The sums run in the same order
  * as the nested-array version, so results are identical; only the allocation and copying are gone.
@@ -56,6 +76,10 @@ function dftFlat(
   reIn: Float64Array, imIn: Float64Array, N: number, inverse: boolean,
   outRe: Float64Array, outIm: Float64Array, tempRe: Float64Array, tempIm: Float64Array
 ): void {
+  if (N >= 2 && (N & (N - 1)) === 0) {
+    dftFlatFft(reIn, imIn, N, inverse, outRe, outIm);
+    return;
+  }
   const kernel = dftKernel(N);
   const cos = kernel.cos;
   const sin = inverse ? kernel.sin : kernel.negSin;
