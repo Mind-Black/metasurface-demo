@@ -168,30 +168,66 @@ export function renderBlockFormula(math: string): string {
 }
 
 /**
+ * Loads KaTeX without blocking anything. Resolves true only when both the stylesheet and the script
+ * are ready: KaTeX emits a MathML copy of every formula that only its stylesheet hides, so inserting
+ * its output before the CSS arrives would show each formula twice.
+ */
+export function loadKatex(base = 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min'): Promise<boolean> {
+  if (typeof window !== 'undefined' && window.katex) return Promise.resolve(true);
+  const load = (element: HTMLLinkElement | HTMLScriptElement) => new Promise<void>((resolve, reject) => {
+    element.onload = () => resolve();
+    element.onerror = () => reject(new Error('KaTeX failed to load'));
+    element.crossOrigin = 'anonymous';
+    document.head.appendChild(element);
+  });
+  const css = document.createElement('link');
+  css.rel = 'stylesheet';
+  css.href = `${base}.css`;
+  const script = document.createElement('script');
+  script.async = true;
+  script.src = `${base}.js`;
+  return Promise.all([load(css), load(script)]).then(() => true, () => false);
+}
+
+/**
  * Scans the provided container or document and upgrades all .math-tex and .math-block
  * nodes to KaTeX or formatted semantic typography.
  */
+/**
+ * A node is final once KaTeX has rendered it. One rendered with the fallback typography is
+ * upgraded when KaTeX arrives later, which is why a single upgrade pass at load time is not enough.
+ */
+function needsRender(el: HTMLElement): boolean {
+  const state = el.dataset.rendered;
+  if (state === 'katex') return false;
+  if (state === 'fallback') return typeof window !== 'undefined' && Boolean(window.katex);
+  return true;
+}
+
+function markRendered(el: HTMLElement): void {
+  el.dataset.rendered = typeof window !== 'undefined' && window.katex ? 'katex' : 'fallback';
+}
+
 export function upgradeMathInContainer(container: HTMLElement = document.body): void {
   const inlineElements = container.querySelectorAll<HTMLElement>('.math-tex');
   inlineElements.forEach((el) => {
-    // Avoid double-rendering if already transformed
-    if (el.dataset.rendered === 'true') return;
+    if (!needsRender(el)) return;
     const rawTex = el.getAttribute('data-tex') || el.textContent || '';
     if (!el.getAttribute('data-tex')) {
       el.setAttribute('data-tex', rawTex);
     }
     el.innerHTML = renderFormula(rawTex);
-    el.dataset.rendered = 'true';
+    markRendered(el);
   });
 
   const blockElements = container.querySelectorAll<HTMLElement>('.math-block');
   blockElements.forEach((el) => {
-    if (el.dataset.rendered === 'true') return;
+    if (!needsRender(el)) return;
     const rawTex = el.getAttribute('data-tex') || el.textContent || '';
     if (!el.getAttribute('data-tex')) {
       el.setAttribute('data-tex', rawTex);
     }
     el.innerHTML = renderBlockFormula(rawTex);
-    el.dataset.rendered = 'true';
+    markRendered(el);
   });
 }

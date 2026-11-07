@@ -44,6 +44,11 @@ class FieldClient {
   private running = new Map<FieldKind, Callback>();
   private waiting = new Map<FieldKind, { request: FieldRequest; callback: Callback }>();
 
+  /** Creates the worker ahead of the first request. */
+  warm(): void {
+    this.getWorker();
+  }
+
   request(request: FieldRequest, callback: Callback): void {
     if (this.running.has(request.kind)) {
       this.waiting.set(request.kind, { request, callback });

@@ -1,8 +1,12 @@
 import { computeFarField } from './farField';
 import { computeXY, computeXZ, FieldWindow } from './propagation';
+import { phaseResponse } from './rcwaLut';
 import type { FieldReply, FieldRequest } from './fieldClient';
 
 const worker = self as unknown as Worker;
+
+// Build the default device's phase response while the page is still loading.
+phaseResponse(0.532, 0.532);
 
 function solve(request: FieldRequest): FieldWindow {
   const { device, halfX, halfV, nx, nv, z } = request;
