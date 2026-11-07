@@ -365,6 +365,26 @@ export function deviceSpectrum(p: FarFieldInput): Spectrum {
   return spectrum;
 }
 
+const cztCache = new Map<string, Czt>();
+const CZT_SLOTS = 4;
+
+/**
+ * Chirp tables depend only on the sizes and sampling, which repeat across solves while the probe
+ * moves. A run() is never interleaved with another, so sharing one instance is safe.
+ */
+function cztFor(inLen: number, outLen: number, f0: number, df: number, x0: number, dx: number): Czt {
+  const key = [inLen, outLen, f0, df, x0, dx].join('|');
+  let czt = cztCache.get(key);
+  if (czt) {
+    cztCache.delete(key);
+  } else {
+    czt = new Czt(inLen, outLen, f0, df, x0, dx);
+    if (cztCache.size >= CZT_SLOTS) cztCache.delete(cztCache.keys().next().value!);
+  }
+  cztCache.set(key, czt);
+  return czt;
+}
+
 /** Complex field on the plane z over x ∈ ±halfX, y ∈ ±halfY, sampled at pixel centres. */
 export function computeXY(p: FarFieldInput, z: number, halfX: number, halfY: number, nx: number, ny: number): FieldWindow {
   const s = deviceSpectrum(p);
@@ -388,8 +408,8 @@ export function computeXY(p: FarFieldInput, z: number, halfX: number, halfY: num
   const dy = (2 * halfY) / ny;
   const x0 = -halfX + dx / 2;
   const y0 = -halfY + dy / 2;
-  const rowsX = new Czt(cols, nx, s.fx0, df, x0, dx);
-  const colsY = new Czt(rows, ny, s.fy0, df, y0, dy);
+  const rowsX = cztFor(cols, nx, s.fx0, df, x0, dx);
+  const colsY = cztFor(rows, ny, s.fy0, df, y0, dy);
   const midRe = new Float64Array(rows * nx);
   const midIm = new Float64Array(rows * nx);
   for (let r = 0; r < rows; r++) rowsX.run(gridRe, gridIm, r * cols, 1, midRe, midIm, r * nx, 1);
@@ -404,38 +424,90 @@ export function computeXY(p: FarFieldInput, z: number, halfX: number, halfY: num
  * carrier lets the z sampling stay coarse; the shader restores it per pixel.
  * Every second fy row is used, which folds the field at |y| = 128 µm onto y = 0.
  */
+/** Starting phasor (2·E·exp(iβdz/2)) and per-step rotation of one spectral bin, written to out[at..at+3]. */
+function startPhasor(s: Spectrum, i: number, k: number, dz: number, out: Float64Array, at: number): void {
+  const beta = s.kz[i] - k;
+  const startA = beta * dz / 2;
+  const c0 = Math.cos(startA);
+  const s0 = Math.sin(startA);
+  out[at] = 2 * (s.re[i] * c0 - s.im[i] * s0);
+  out[at + 1] = 2 * (s.re[i] * s0 + s.im[i] * c0);
+  out[at + 2] = Math.cos(beta * dz);
+  out[at + 3] = Math.sin(beta * dz);
+}
+
+const phasors = new Float64Array(16);
+
 export function computeXZ(p: FarFieldInput, halfX: number, zMax: number, nx: number, nz: number): FieldWindow {
   const s = deviceSpectrum(p);
   const { cols, df } = s;
   const k = TAU / p.wavelength;
-  const planeRe = new Float64Array(nz * cols);
-  const planeIm = new Float64Array(nz * cols);
-  const dz = zMax / nz;
+  // Group the used (even-iy) bins by column with a stable counting sort. Each plane cell still
+  // receives its contributions in the original bin order, so the sums are unchanged, but a column
+  // is now one contiguous run of nz values instead of a stride of `cols` doubles.
+  const columnStart = new Int32Array(cols + 1);
+  let used = 0;
   for (let i = 0; i < s.re.length; i++) {
     if (s.iy[i] & 1) continue;
-    const beta = s.kz[i] - k;
-    const stepR = Math.cos(beta * dz);
-    const stepI = Math.sin(beta * dz);
-    const startA = beta * dz / 2;
-    const c0 = Math.cos(startA);
-    const s0 = Math.sin(startA);
-    let ar = 2 * (s.re[i] * c0 - s.im[i] * s0);
-    let ai = 2 * (s.re[i] * s0 + s.im[i] * c0);
-    const col = s.ix[i];
-    for (let z = 0, at = col; z < nz; z++, at += cols) {
-      planeRe[at] += ar;
-      planeIm[at] += ai;
-      const t = ar * stepR - ai * stepI;
-      ai = ar * stepI + ai * stepR;
-      ar = t;
+    columnStart[s.ix[i] + 1]++;
+    used++;
+  }
+  for (let c = 0; c < cols; c++) columnStart[c + 1] += columnStart[c];
+  const order = new Int32Array(used);
+  const next = columnStart.slice(0, cols);
+  for (let i = 0; i < s.re.length; i++) {
+    if (!(s.iy[i] & 1)) order[next[s.ix[i]]++] = i;
+  }
+
+  const planeRe = new Float64Array(cols * nz); // [col * nz + z]
+  const planeIm = new Float64Array(cols * nz);
+  const dz = zMax / nz;
+  for (let col = 0; col < cols; col++) {
+    const base = col * nz;
+    let m = columnStart[col];
+    const end = columnStart[col + 1];
+    // Four bins at a time: their rotations are independent, which hides the multiply latency of
+    // each recurrence, and the cell is still summed in bin order (bin 0, then 1, 2, 3).
+    for (; m + 4 <= end; m += 4) {
+      for (let j = 0; j < 4; j++) startPhasor(s, order[m + j], k, dz, phasors, 4 * j);
+      let ar0 = phasors[0], ai0 = phasors[1]; const sr0 = phasors[2], si0 = phasors[3];
+      let ar1 = phasors[4], ai1 = phasors[5]; const sr1 = phasors[6], si1 = phasors[7];
+      let ar2 = phasors[8], ai2 = phasors[9]; const sr2 = phasors[10], si2 = phasors[11];
+      let ar3 = phasors[12], ai3 = phasors[13]; const sr3 = phasors[14], si3 = phasors[15];
+      for (let z = 0, at = base; z < nz; z++, at++) {
+        let pr = planeRe[at];
+        let pi = planeIm[at];
+        pr += ar0; pi += ai0;
+        pr += ar1; pi += ai1;
+        pr += ar2; pi += ai2;
+        pr += ar3; pi += ai3;
+        planeRe[at] = pr;
+        planeIm[at] = pi;
+        let t = ar0 * sr0 - ai0 * si0; ai0 = ar0 * si0 + ai0 * sr0; ar0 = t;
+        t = ar1 * sr1 - ai1 * si1; ai1 = ar1 * si1 + ai1 * sr1; ar1 = t;
+        t = ar2 * sr2 - ai2 * si2; ai2 = ar2 * si2 + ai2 * sr2; ar2 = t;
+        t = ar3 * sr3 - ai3 * si3; ai3 = ar3 * si3 + ai3 * sr3; ar3 = t;
+      }
+    }
+    for (; m < end; m++) {
+      startPhasor(s, order[m], k, dz, phasors, 0);
+      let ar = phasors[0], ai = phasors[1];
+      const stepR = phasors[2], stepI = phasors[3];
+      for (let z = 0, at = base; z < nz; z++, at++) {
+        planeRe[at] += ar;
+        planeIm[at] += ai;
+        const t = ar * stepR - ai * stepI;
+        ai = ar * stepI + ai * stepR;
+        ar = t;
+      }
     }
   }
   const dx = (2 * halfX) / nx;
   const x0 = -halfX + dx / 2;
-  const toX = new Czt(cols, nx, s.fx0, df, x0, dx);
+  const toX = cztFor(cols, nx, s.fx0, df, x0, dx);
   const outRe = new Float64Array(nz * nx);
   const outIm = new Float64Array(nz * nx);
-  for (let z = 0; z < nz; z++) toX.run(planeRe, planeIm, z * cols, 1, outRe, outIm, z * nx, 1);
+  for (let z = 0; z < nz; z++) toX.run(planeRe, planeIm, z, nz, outRe, outIm, z * nx, 1);
   return packField(outRe, outIm, nx, nz, x0, dx, dz / 2, dz);
 }
 
