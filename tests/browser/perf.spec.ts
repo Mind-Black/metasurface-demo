@@ -5,17 +5,27 @@ import { test, expect, Page } from '@playwright/test';
  * measure what the browser actually did. Assertions use counts and relative changes, never wall
  * time: headless Chromium renders with SwiftShader, so absolute GPU numbers mean nothing here.
  */
-interface Counters { draws: Record<string, number>; jobs: Record<string, number> }
+interface Counters { draws: Record<string, number>; jobs: Record<string, number>; replies: Array<{ kind: string; t: number }> }
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    const counters = { draws: {} as Record<string, number>, jobs: {} as Record<string, number> };
+    const counters = { draws: {} as Record<string, number>, jobs: {} as Record<string, number>, replies: [] as Array<{ kind: string; t: number }> };
     (window as unknown as { __perf: typeof counters }).__perf = counters;
     const draw = WebGL2RenderingContext.prototype.drawArrays;
     WebGL2RenderingContext.prototype.drawArrays = function (this: WebGL2RenderingContext, ...args: Parameters<typeof draw>) {
       const id = (this.canvas as HTMLCanvasElement).id;
       counters.draws[id] = (counters.draws[id] ?? 0) + 1;
       return draw.apply(this, args);
+    };
+    const NativeWorker = Worker;
+    window.Worker = class extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        this.addEventListener('message', (event: MessageEvent) => {
+          const kind = event.data?.request?.kind;
+          if (kind) counters.replies.push({ kind, t: performance.now() });
+        });
+      }
     };
     const post = Worker.prototype.postMessage;
     Worker.prototype.postMessage = function (this: Worker, message: { kind?: string }, ...rest: unknown[]) {
@@ -30,6 +40,7 @@ const reset = (page: Page) => page.evaluate(() => {
   const perf = (window as unknown as { __perf: Counters }).__perf;
   for (const key of Object.keys(perf.draws)) perf.draws[key] = 0;
   for (const key of Object.keys(perf.jobs)) perf.jobs[key] = 0;
+  perf.replies.length = 0;
 });
 /** Waits until no worker request has been posted for `quietMs`. */
 async function settle(page: Page, quietMs = 1200) {
@@ -150,9 +161,31 @@ test.describe('slider drag', () => {
       scriptSeconds: delta('ScriptDuration'),
       taskSeconds: delta('TaskDuration'),
       jobs: perf.jobs,
+      answered: perf.replies.reduce<Record<string, number>>((counts, r) => ({ ...counts, [r.kind]: (counts[r.kind] ?? 0) + 1 }), {}),
     };
     testInfo.annotations.push({ type: 'drag', description: JSON.stringify(summary) });
     console.log('DRAG', JSON.stringify(summary));
     expect(summary.layouts).toBeLessThanOrEqual(summary.frames * 2 + 10);
+  });
+});
+
+test.describe('device change latency', () => {
+  test('answers the main panel before the calibration overview', async ({ page }, testInfo) => {
+    await page.goto('/');
+    await settle(page);
+    await reset(page);
+    const start = await page.evaluate(() => {
+      const slider = document.querySelector<HTMLInputElement>('#demo-slider-focal')!;
+      slider.value = '33';
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+      return performance.now();
+    });
+    await expect.poll(async () => new Set((await read(page)).replies.map((r) => r.kind)).size, { timeout: 15000 }).toBe(4);
+    const replies = (await read(page)).replies;
+    const firstOf = (kind: string) => replies.find((r) => r.kind === kind)!;
+    const summary = Object.fromEntries(['far', 'xz', 'xy', 'overview'].map((kind) => [kind, Math.round(firstOf(kind).t - start)]));
+    testInfo.annotations.push({ type: 'latency', description: JSON.stringify(summary) });
+    console.log('LATENCY ms after the change', JSON.stringify(summary));
+    expect(firstOf('xz').t).toBeLessThan(firstOf('overview').t);
   });
 });
