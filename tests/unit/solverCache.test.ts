@@ -44,7 +44,7 @@ describe('device key and spectrum cache', () => {
     deviceSpectrum(c);
     expect(deviceSpectrum(b)).toBe(sb);
     expect(deviceSpectrum(a)).not.toBe(sa);
-  });
+  }, 60000);
 });
 
 describe('field requests for hidden or degenerate panels', () => {

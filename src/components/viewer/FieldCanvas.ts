@@ -83,7 +83,7 @@ export abstract class FieldCanvas {
     this.initWebGL(fragmentSource, uniforms);
   }
 
-  protected abstract fieldRequest(state: OpticsState): FieldRequest;
+  protected abstract fieldRequest(state: OpticsState): FieldRequest | null;
   protected abstract setUniforms(gl: WebGL2RenderingContext, state: OpticsState): void;
 
   private initWebGL(fragmentSource: string, uniforms: string[]): void {
@@ -141,6 +141,7 @@ export abstract class FieldCanvas {
 
   private syncField(state: OpticsState): void {
     const request = this.fieldRequest(state);
+    if (!request) return;
     const { device, ...view } = request;
     const key = `${deviceKey(device)}#${JSON.stringify(view)}`;
     if (key === this.requestedKey) return;

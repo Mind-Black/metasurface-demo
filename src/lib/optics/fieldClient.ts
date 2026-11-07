@@ -18,11 +18,13 @@ export interface FieldReply {
   request: FieldRequest;
   field?: FieldWindow;
   far?: FarFieldResult;
+  error?: string;
 }
 
 type Callback = (reply: FieldReply) => void;
 
 export function deviceFromState(state: OpticsState): FarFieldInput {
+  const gradients = state.activeGradients;
   return {
     wavelength: state.wavelength,
     designWavelength: state.designWavelength,
@@ -30,8 +32,9 @@ export function deviceFromState(state: OpticsState): FarFieldInput {
     diameter: state.diameter,
     deflectionAngle: state.deflectionAngle,
     topologicalCharge: state.topologicalCharge,
-    ...state.activeGradients,
-    cghPhaseMask: state.cghPhaseMask,
+    ...gradients,
+    // The mask is only read in hologram mode; leaving it out saves cloning it into the worker.
+    cghPhaseMask: gradients.hologram ? state.cghPhaseMask : null,
   };
 }
 

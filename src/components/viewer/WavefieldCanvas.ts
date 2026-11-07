@@ -79,6 +79,21 @@ const FIELD_ROWS = 256;
 const PIXELS_PER_ROW = 1.5;
 
 /** y = 0 slice of the 3D field. */
+/** Solve window for a panel of the given pixel size; null while the panel has no area (hidden tab). */
+export function xzFieldRequest(state: OpticsState, width: number, height: number): FieldRequest | null {
+  if (!(width > 0) || !(height > 0)) return null;
+  const zoom = state.wavefieldZoom || 1;
+  const aspect = width / height;
+  return {
+    kind: 'xz',
+    device: deviceFromState(state),
+    halfX: Math.max(30, 30 * aspect) / zoom,
+    halfV: 60 / zoom,
+    nx: Math.min(900, Math.round(FIELD_ROWS * PIXELS_PER_ROW * Math.max(1, aspect))),
+    nv: FIELD_ROWS,
+  };
+}
+
 export class WavefieldRenderer extends FieldCanvas {
   private showRays = false;
   private isDraggingProbe = false;
@@ -93,17 +108,8 @@ export class WavefieldRenderer extends FieldCanvas {
     this.canvas.addEventListener('pointercancel', this.onPointerUp);
   }
 
-  protected fieldRequest(state: OpticsState): FieldRequest {
-    const zoom = state.wavefieldZoom || 1;
-    const aspect = this.canvas.clientWidth / Math.max(1, this.canvas.clientHeight);
-    return {
-      kind: 'xz',
-      device: deviceFromState(state),
-      halfX: Math.max(30, 30 * aspect) / zoom,
-      halfV: 60 / zoom,
-      nx: Math.min(900, Math.round(FIELD_ROWS * PIXELS_PER_ROW * Math.max(1, aspect))),
-      nv: FIELD_ROWS,
-    };
+  protected fieldRequest(state: OpticsState): FieldRequest | null {
+    return xzFieldRequest(state, this.canvas.clientWidth, this.canvas.clientHeight);
   }
 
   protected setUniforms(gl: WebGL2RenderingContext, state: OpticsState): void {

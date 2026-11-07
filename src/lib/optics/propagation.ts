@@ -177,16 +177,38 @@ class Czt {
   }
 }
 
-const maskIds = new WeakMap<number[][], number>();
-let nextMaskId = 1;
+const maskKeys = new WeakMap<number[][], string>();
+
+/**
+ * Content hash of a hologram phase mask. Masks cross the worker boundary by structured clone, so
+ * object identity cannot be used: every request would otherwise look like a new device.
+ */
+function maskKey(mask: number[][]): string {
+  let key = maskKeys.get(mask);
+  if (key === undefined) {
+    const value = new Float64Array(1);
+    const words = new Uint32Array(value.buffer);
+    let h1 = 0x811c9dc5;
+    let h2 = 0x9747b28c;
+    for (const row of mask) {
+      h1 = Math.imul(h1 ^ row.length, 16777619);
+      h2 = Math.imul(h2 ^ row.length, 0x85ebca6b);
+      for (let i = 0; i < row.length; i++) {
+        value[0] = row[i];
+        h1 = Math.imul(Math.imul(h1 ^ words[0], 16777619) ^ words[1], 16777619);
+        h2 = Math.imul(h2 ^ words[0], 0x85ebca6b);
+        h2 = Math.imul(h2 ^ (h2 >>> 13) ^ words[1], 0xc2b2ae35);
+      }
+    }
+    key = `${mask.length}x${mask[0]?.length ?? 0}:${(h1 >>> 0).toString(16)}${(h2 >>> 0).toString(16)}`;
+    maskKeys.set(mask, key);
+  }
+  return key;
+}
 
 /** Identifies everything that changes the transmitted field. */
 export function deviceKey(p: FarFieldInput): string {
-  let mask = 0;
-  if (p.hologram && p.cghPhaseMask) {
-    if (!maskIds.has(p.cghPhaseMask)) maskIds.set(p.cghPhaseMask, nextMaskId++);
-    mask = maskIds.get(p.cghPhaseMask)!;
-  }
+  const mask = p.hologram && p.cghPhaseMask ? maskKey(p.cghPhaseMask) : '0';
   return [p.wavelength, p.designWavelength, p.focalLength, p.diameter, p.deflectionAngle,
     p.topologicalCharge, p.lens, p.deflect, p.vortex, p.hologram, mask].join('|');
 }
@@ -194,12 +216,20 @@ export function deviceKey(p: FarFieldInput): string {
 const wrapIndex = (i: number) => ((i % N) + N) % N;
 const sinc = (x: number) => (Math.abs(x) < 1e-9 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x));
 
-let cached: Spectrum | null = null;
+/** Most recently used first. Two slots let a drag that alternates between two devices keep hitting. */
+const spectrumCache: Spectrum[] = [];
+const SPECTRUM_SLOTS = 2;
 
 /** Angular spectrum of the lattice field, including every order that propagates in air. */
 export function deviceSpectrum(p: FarFieldInput): Spectrum {
   const key = deviceKey(p);
-  if (cached?.key === key) return cached;
+  const hit = spectrumCache.findIndex((entry) => entry.key === key);
+  if (hit === 0) return spectrumCache[0];
+  if (hit > 0) {
+    const [entry] = spectrumCache.splice(hit, 1);
+    spectrumCache.unshift(entry);
+    return entry;
+  }
   const pitch = TABLE_PITCH_UM;
   const response = phaseResponse(p.designWavelength, p.wavelength);
   const size = response.re.length;
@@ -275,7 +305,8 @@ export function deviceSpectrum(p: FarFieldInput): Spectrum {
     spectrum.im[n] = out[i + 3];
     spectrum.kz[n++] = out[i + 4];
   }
-  cached = spectrum;
+  spectrumCache.unshift(spectrum);
+  spectrumCache.length = Math.min(spectrumCache.length, SPECTRUM_SLOTS);
   return spectrum;
 }
 

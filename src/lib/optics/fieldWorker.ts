@@ -11,7 +11,23 @@ function solve(request: FieldRequest): FieldWindow {
     : computeXZ(device, halfX, halfV, nx, nv);
 }
 
+const DEVICE_NUMBERS = ['wavelength', 'designWavelength', 'focalLength', 'diameter', 'deflectionAngle', 'topologicalCharge'] as const;
+
+/** A request with a non-finite window or device would burn a full solve to produce NaNs. */
+function validate(request: FieldRequest): string | null {
+  const { device, halfX, halfV, nx, nv, z } = request;
+  if (![halfX, nx, z ?? 0].every(Number.isFinite) || !(nx > 0)) return 'non-finite or empty window';
+  if (request.kind !== 'far' && (!Number.isFinite(halfV) || !(nv > 0))) return 'non-finite or empty window';
+  if (!DEVICE_NUMBERS.every((key) => Number.isFinite(device[key]))) return 'non-finite device';
+  return null;
+}
+
 worker.onmessage = (event: MessageEvent<FieldRequest>) => {
+  const error = validate(event.data);
+  if (error) {
+    worker.postMessage({ request: event.data, error } satisfies FieldReply);
+    return;
+  }
   if (event.data.kind === 'far') {
     const far = computeFarField(event.data.device, event.data.nx, event.data.halfX);
     const reply: FieldReply = { request: event.data, far };
