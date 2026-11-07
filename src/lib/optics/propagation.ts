@@ -361,12 +361,21 @@ export function computeXY(p: FarFieldInput, z: number, halfX: number, halfY: num
   const y0 = -halfY + dy / 2;
   const rowsX = cztFor(cols, nx, s.fx0, df, x0, dx);
   const colsY = cztFor(rows, ny, s.fy0, df, y0, dy);
-  const midRe = new Float64Array(rows * nx);
-  const midIm = new Float64Array(rows * nx);
-  for (let r = 0; r < rows; r++) rowsX.run(gridRe, gridIm, r * cols, 1, midRe, midIm, r * nx, 1);
   const outRe = new Float64Array(ny * nx);
   const outIm = new Float64Array(ny * nx);
-  for (let c = 0; c < nx; c++) colsY.run(midRe, midIm, c, nx, outRe, outIm, c, nx);
+  // The two axes are independent, so transform the one that ends up with fewer lines second: a
+  // wide panel needs rows + nx chirp-z runs one way and cols + ny the other.
+  if (cols + ny < rows + nx) {
+    const midRe = new Float64Array(ny * cols);
+    const midIm = new Float64Array(ny * cols);
+    for (let c = 0; c < cols; c++) colsY.run(gridRe, gridIm, c, cols, midRe, midIm, c, cols);
+    for (let j = 0; j < ny; j++) rowsX.run(midRe, midIm, j * cols, 1, outRe, outIm, j * nx, 1);
+  } else {
+    const midRe = new Float64Array(rows * nx);
+    const midIm = new Float64Array(rows * nx);
+    for (let r = 0; r < rows; r++) rowsX.run(gridRe, gridIm, r * cols, 1, midRe, midIm, r * nx, 1);
+    for (let c = 0; c < nx; c++) colsY.run(midRe, midIm, c, nx, outRe, outIm, c, nx);
+  }
   return packField(outRe, outIm, nx, ny, x0, dx, y0, dy);
 }
 

@@ -43,17 +43,39 @@ describe('deviceSpectrum matches the frozen legacy implementation exactly', () =
   }
 });
 
-describe('field windows match the frozen legacy implementation exactly', () => {
+describe('XZ windows match the frozen legacy implementation exactly', () => {
   for (const [name, over] of Object.entries(variants)) {
-    it(`${name}: XZ and XY`, () => {
+    it(name, () => {
       const p = device(over, 30, 0.532);
-      for (const [now, before] of [
-        [computeXZ(p, 40, 60, 160, 64), legacy.computeXZ(p, 40, 60, 160, 64)],
-        [computeXY(p, 25, 25, 17, 120, 96), legacy.computeXY(p, 25, 25, 17, 120, 96)],
-      ]) {
-        sameArray(now.data, before.data, 'data');
-        for (const field of ['nx', 'ny', 'peak', 'peakX', 'peakV'] as const) expect(now[field], field).toBe(before[field]);
-      }
+      const now = computeXZ(p, 40, 60, 160, 64);
+      const before = legacy.computeXZ(p, 40, 60, 160, 64);
+      sameArray(now.data, before.data, 'data');
+      for (const field of ['nx', 'ny', 'peak', 'peakX', 'peakV'] as const) expect(now[field], field).toBe(before[field]);
     }, 120000);
+  }
+});
+
+describe('XY windows track the frozen legacy implementation', () => {
+  // XY transforms the shorter output axis second, which reorders the separable sums; results agree
+  // to rounding error rather than bit for bit. Windows cover both orders (wide, tall, square).
+  const shapes: Array<[string, number, number, number, number]> = [
+    ['wide', 25, 17, 120, 96], ['tall', 17, 25, 96, 120], ['square', 20, 20, 100, 100], ['strongly wide', 40, 10, 160, 40],
+  ];
+  for (const [name, over] of Object.entries(variants)) {
+    for (const [shape, halfX, halfY, nx, ny] of shapes) {
+      it(`${name}, ${shape}`, () => {
+        const p = device(over, 30, 0.532);
+        const now = computeXY(p, 25, halfX, halfY, nx, ny);
+        const before = legacy.computeXY(p, 25, halfX, halfY, nx, ny);
+        expect(now.nx).toBe(before.nx);
+        expect(now.ny).toBe(before.ny);
+        let largest = 0;
+        for (let i = 0; i < before.data.length; i++) largest = Math.max(largest, Math.abs(before.data[i]));
+        let worst = 0;
+        for (let i = 0; i < before.data.length; i++) worst = Math.max(worst, Math.abs(now.data[i] - before.data[i]));
+        expect(worst).toBeLessThan(1e-5 * largest);
+        expect(now.peak).toBeCloseTo(before.peak, 4);
+      }, 120000);
+    }
   }
 });
