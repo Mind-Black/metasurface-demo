@@ -6,7 +6,10 @@
  * unit-amplitude normal illumination, and no evanescent field at z > 0.
  */
 import { aperturePhase, FarFieldInput } from './farField';
+import { fft } from './fft';
 import { phaseResponse, TABLE_PITCH_UM } from './rcwaLut';
+
+export { fft };
 
 const N = 1024;
 const TAU = 2 * Math.PI;
@@ -35,58 +38,6 @@ interface Spectrum {
   re: Float64Array;
   im: Float64Array;
   kz: Float64Array;  // axial wavenumber [rad/µm]
-}
-
-const twiddles = new Map<number, { cos: Float64Array; sin: Float64Array; rev: Uint32Array }>();
-
-function fftTables(n: number) {
-  let table = twiddles.get(n);
-  if (!table) {
-    const bits = Math.log2(n);
-    const rev = new Uint32Array(n);
-    for (let i = 0; i < n; i++) rev[i] = (rev[i >> 1] >> 1) | ((i & 1) << (bits - 1));
-    const cos = new Float64Array(n / 2);
-    const sin = new Float64Array(n / 2);
-    for (let i = 0; i < n / 2; i++) {
-      cos[i] = Math.cos((TAU * i) / n);
-      sin[i] = -Math.sin((TAU * i) / n);
-    }
-    table = { cos, sin, rev };
-    twiddles.set(n, table);
-  }
-  return table;
-}
-
-/** In-place radix-2 forward FFT over re[offset + i * stride]. */
-export function fft(re: Float64Array, im: Float64Array, n: number, offset = 0, stride = 1): void {
-  const { cos, sin, rev } = fftTables(n);
-  for (let i = 0; i < n; i++) {
-    const j = rev[i];
-    if (j > i) {
-      const a = offset + i * stride;
-      const b = offset + j * stride;
-      let t = re[a]; re[a] = re[b]; re[b] = t;
-      t = im[a]; im[a] = im[b]; im[b] = t;
-    }
-  }
-  for (let size = 2; size <= n; size <<= 1) {
-    const half = size >> 1;
-    const step = n / size;
-    for (let start = 0; start < n; start += size) {
-      for (let k = 0; k < half; k++) {
-        const wr = cos[k * step];
-        const wi = sin[k * step];
-        const a = offset + (start + k) * stride;
-        const b = a + half * stride;
-        const xr = re[b] * wr - im[b] * wi;
-        const xi = re[b] * wi + im[b] * wr;
-        re[b] = re[a] - xr;
-        im[b] = im[a] - xi;
-        re[a] += xr;
-        im[a] += xi;
-      }
-    }
-  }
 }
 
 /**

@@ -5,6 +5,8 @@ import { computeXY, computeXZ, deviceSpectrum } from '@/lib/optics/propagation';
 import { generateTargetBitmap, runGerchbergSaxton } from '@/lib/optics/gerchbergSaxton';
 import { colorizeFarField } from '@/lib/optics/farFieldColor';
 import { legacyColorize } from '../unit/helpers/legacyFarFieldColor';
+import { fft } from '@/lib/optics/fft';
+import { fft as legacyFft } from '../unit/helpers/legacyPropagation';
 import { measure, reportAtEnd } from './harness';
 
 const mk = (over: Partial<FarFieldInput>): FarFieldInput => ({
@@ -62,6 +64,17 @@ describe('far-field recolour 256^2', () => {
     for (const mode of ['field', 'phase', 'intensity'] as const) {
       measure(`recolour ${mode} | legacy loop`, () => { legacyColorize(result, mode, 0.3, 1, false, 40, data); }, 9);
       measure(`recolour ${mode} | colorizeFarField`, () => { colorizeFarField(result, { mode, time: 0.3, intensityMax: 1, logScale: false, dynamicRangeDb: 40 }, data); }, 9);
+    }
+  });
+});
+
+describe('fft kernel', () => {
+  it('2048-point and 1024-point transforms', () => {
+    for (const n of [1024, 2048]) {
+      const re = new Float64Array(n), im = new Float64Array(n);
+      for (let i = 0; i < n; i++) { re[i] = Math.sin(i * 0.37); im[i] = Math.cos(i * 0.11); }
+      measure(`fft ${n} x1000 | legacy`, () => { for (let i = 0; i < 1000; i++) legacyFft(re, im, n); }, 9);
+      measure(`fft ${n} x1000 | fft.ts`, () => { for (let i = 0; i < 1000; i++) fft(re, im, n); }, 9);
     }
   });
 });
