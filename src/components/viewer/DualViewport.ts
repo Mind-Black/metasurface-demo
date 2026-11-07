@@ -1,4 +1,4 @@
-import { opticsStore, DeviceType, RenderMode, ActiveGradients, MAX_HOLOGRAM_ITERATIONS } from '@/lib/store/useOpticsStore';
+import { opticsStore, OpticsState, DeviceType, RenderMode, ActiveGradients, MAX_HOLOGRAM_ITERATIONS } from '@/lib/store/useOpticsStore';
 import { WavefieldRenderer } from './WavefieldCanvas';
 import { NanostructureLatticeViewer } from './NanostructureLattice';
 import { XYProfileRenderer } from './XYProfileCanvas';
@@ -12,6 +12,10 @@ export class DualViewport {
   private latticeViewer: NanostructureLatticeViewer | null = null;
   private xyRenderer: XYProfileRenderer | null = null;
   private farFieldRenderer: FarFieldRenderer | null = null;
+  private syncFrame: number | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  /** Canvas sizes from the ResizeObserver, so the scale rulers never force a layout. */
+  private canvasSizes = new Map<Element, { w: number; h: number }>();
   private unsubscribe: (() => void) | null = null;
   private focusZ: number | null = null;
 
@@ -586,6 +590,15 @@ export class DualViewport {
       this.latticeViewer = new NanostructureLatticeViewer(latticeContainer, latticeCanvas);
     }
 
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) this.canvasSizes.set(entry.target, { w: entry.contentRect.width, h: entry.contentRect.height });
+        this.updateScaleRuler();
+        this.updateXyScaleRuler();
+      });
+      for (const canvas of [wavefieldCanvas, xyCanvas]) if (canvas) this.resizeObserver.observe(canvas);
+    }
+
     // Handle window resize
     window.addEventListener('resize', this.handleResize);
 
@@ -593,6 +606,10 @@ export class DualViewport {
     setTimeout(() => {
       this.handleResize();
     }, 100);
+  }
+
+  private sizeOf(element: HTMLElement): { w: number; h: number } {
+    return this.canvasSizes.get(element) ?? { w: element.clientWidth, h: element.clientHeight };
   }
 
   private handleResize = (): void => {
@@ -608,8 +625,7 @@ export class DualViewport {
     const wavefieldCanvas = this.container.querySelector<HTMLCanvasElement>('#wavefield-canvas');
     const rulerBar = this.container.querySelector<HTMLElement>('#scale-ruler-bar');
     if (!wavefieldCanvas || !rulerBar) return;
-    const w = wavefieldCanvas.clientWidth;
-    const h = wavefieldCanvas.clientHeight;
+    const { w, h } = this.sizeOf(wavefieldCanvas);
     if (w <= 0 || h <= 0) return;
     const aspect = w / Math.max(1, h);
     const zoom = opticsStore.getState().wavefieldZoom || 1;
@@ -625,7 +641,7 @@ export class DualViewport {
     const rulerBar = this.container.querySelector<HTMLElement>('#xy-scale-ruler-bar');
     const rulerLabel = this.container.querySelector<HTMLElement>('#xy-scale-ruler-label');
     if (!xyCanvas || !rulerBar || !rulerLabel) return;
-    const w = xyCanvas.clientWidth;
+    const { w } = this.sizeOf(xyCanvas);
     if (w <= 0) return;
     const zoom = opticsStore.getState().xyZoom || 1.0;
     const halfSpan = 25.0 / zoom;
@@ -1029,7 +1045,7 @@ export class DualViewport {
     });
 
     // Sync button active classes if store changed externally
-    this.unsubscribe = opticsStore.subscribe((state) => {
+    const syncFromStore = (state: OpticsState): void => {
       nearScaleControls.forEach((control) => control.classList.toggle('hidden', state.renderMode !== 'intensity'));
       this.container.querySelector('.farfield-scale-toggle')?.classList.toggle('hidden', state.renderMode !== 'intensity');
       this.farFieldRenderer?.setMode(state.renderMode);
@@ -1277,11 +1293,23 @@ export class DualViewport {
 
       this.xyRenderer?.requestRender();
       this.farFieldRenderer?.update();
+    };
+    // Sliders and pointer drags notify at input rate; one DOM sync per frame, on the latest state, is enough.
+    this.unsubscribe = opticsStore.subscribe(() => {
+      if (this.syncFrame !== null) return;
+      this.syncFrame = requestAnimationFrame(() => {
+        this.syncFrame = null;
+        syncFromStore(opticsStore.getState());
+      });
     });
   }
 
   public destroy(): void {
     window.removeEventListener('resize', this.handleResize);
+    if (this.syncFrame !== null) cancelAnimationFrame(this.syncFrame);
+    this.syncFrame = null;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = null;

@@ -92,8 +92,8 @@ export class NanostructureLatticeViewer {
   private phaseMapKey = '';
   private phaseMapMask: number[][] | null = null;
   private visible = true;
-  /** The device changed while the viewer was hidden; rebuild when it is shown again. */
-  private stale = false;
+  /** The store changed; rebuild once on the next frame instead of once per notification. */
+  private rebuildPending = false;
   private intersection: IntersectionObserver | null = null;
 
   private readonly MAX_GRID_SIZE = 201; // 50 µm aperture at 250 nm pitch
@@ -144,7 +144,7 @@ export class NanostructureLatticeViewer {
 
     // Subscribe to store updates
     this.unsubscribe = opticsStore.subscribe(() => {
-      this.updateLattice();
+      this.rebuildPending = true;
     });
 
     if (typeof IntersectionObserver !== 'undefined') {
@@ -154,7 +154,6 @@ export class NanostructureLatticeViewer {
         this.visible = visible;
         if (!visible) return;
         this.resize();
-        if (this.stale) this.updateLattice();
         this.needsRender = true;
       });
       this.intersection.observe(container);
@@ -216,11 +215,6 @@ export class NanostructureLatticeViewer {
 
   public updateLattice(): void {
     if (!this.pillarMesh) return;
-    if (!this.visible) {
-      this.stale = true;
-      return;
-    }
-    this.stale = false;
     const state = opticsStore.getState();
     const ag = state.activeGradients;
     const key = [state.diameter, state.designWavelength, state.focalLength,
@@ -258,8 +252,16 @@ export class NanostructureLatticeViewer {
     }
     targetMesh.count = index;
     targetMesh.computeBoundingSphere();
+    // Upload only the instances in use; the buffers are sized for the largest aperture.
+    targetMesh.instanceMatrix.clearUpdateRanges();
+    targetMesh.instanceMatrix.addUpdateRange(0, index * 16);
     targetMesh.instanceMatrix.needsUpdate = true;
-    if (targetMesh.instanceColor) targetMesh.instanceColor.needsUpdate = true;
+    if (targetMesh.instanceColor) {
+      targetMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      targetMesh.instanceColor.clearUpdateRanges();
+      targetMesh.instanceColor.addUpdateRange(0, index * 3);
+      targetMesh.instanceColor.needsUpdate = true;
+    }
     this.updatePhaseMap(state);
     this.phaseMapKey = key;
     this.phaseMapMask = state.cghPhaseMask;
@@ -295,6 +297,10 @@ export class NanostructureLatticeViewer {
     if (this.animId !== null) return;
     this.needsRender = true;
     const animate = () => {
+      if (this.rebuildPending && this.visible) {
+        this.rebuildPending = false;
+        this.updateLattice();
+      }
       const controlsChanged = this.controls.update();
       if (this.visible && (controlsChanged || this.needsRender)) {
         this.renderer.render(this.scene, this.camera);

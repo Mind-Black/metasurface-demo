@@ -79,6 +79,10 @@ export abstract class FieldCanvas {
   private dirty = true;
   /** Scrolled into (or near) view and not in a hidden tab. */
   private visible = true;
+  private lastWidth = 0;
+  private lastHeight = 0;
+  /** While a panel is being resized the request key changes every frame; wait for it to settle. */
+  private settleUntil = 0;
   private unsubscribe: (() => void) | null = null;
   private intersection: IntersectionObserver | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -246,8 +250,19 @@ export abstract class FieldCanvas {
     if (this.canvas.clientWidth === 0 || this.canvas.clientHeight === 0) return;
     const state = opticsStore.getState();
     if (state.isPlaying && timestamp !== undefined) this.currentTime = (timestamp - this.startTime) * 0.001;
+    const width = this.canvas.clientWidth;
+    const height = this.canvas.clientHeight;
+    if (width !== this.lastWidth || height !== this.lastHeight) {
+      // The first size, and any size with no picture to stretch yet, solves immediately.
+      if (this.lastWidth !== 0 && this.shown) {
+        this.settleUntil = performance.now() + 120;
+        setTimeout(() => this.requestRender(), 130);
+      }
+      this.lastWidth = width;
+      this.lastHeight = height;
+    }
     this.resize();
-    this.syncField(state);
+    if (performance.now() >= this.settleUntil) this.syncField(state);
 
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);

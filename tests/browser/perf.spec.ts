@@ -115,3 +115,44 @@ test.describe('hidden panels on a phone', () => {
     await expect.poll(async () => (await read(page)).jobs['xy'] ?? 0).toBeGreaterThan(0);
   });
 });
+
+test.describe('slider drag', () => {
+  test('a 180-event focal-length drag in bursts of four per frame costs layouts and style recalcs in proportion to frames', async ({ page }, testInfo) => {
+    await page.goto('/');
+    await settle(page);
+    const client = await page.context().newCDPSession(page);
+    await client.send('Performance.enable');
+    const metrics = async () => Object.fromEntries((await client.send('Performance.getMetrics')).metrics.map((m) => [m.name, m.value]));
+    await reset(page);
+    const before = await metrics();
+    const frames = await page.evaluate(async () => {
+      const slider = document.querySelector<HTMLInputElement>('#demo-slider-focal')!;
+      let rafs = 0;
+      let running = true;
+      const count = () => { if (running) { rafs++; requestAnimationFrame(count); } };
+      requestAnimationFrame(count);
+      for (let i = 0; i < 180; i++) {
+        slider.value = String(15 + i * 0.15);
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+        if (i % 4 === 3) await new Promise((resolve) => setTimeout(resolve, 16));
+      }
+      running = false;
+      return rafs;
+    });
+    const after = await metrics();
+    const perf = await read(page);
+    const delta = (name: string) => Math.round((after[name] - before[name]) * 1000) / 1000;
+    const summary = {
+      events: 180,
+      frames,
+      layouts: delta('LayoutCount'),
+      styleRecalcs: delta('RecalcStyleCount'),
+      scriptSeconds: delta('ScriptDuration'),
+      taskSeconds: delta('TaskDuration'),
+      jobs: perf.jobs,
+    };
+    testInfo.annotations.push({ type: 'drag', description: JSON.stringify(summary) });
+    console.log('DRAG', JSON.stringify(summary));
+    expect(summary.layouts).toBeLessThanOrEqual(summary.frames * 2 + 10);
+  });
+});
