@@ -1,20 +1,7 @@
 import { opticsStore, RenderMode } from '@/lib/store/useOpticsStore';
 import { FarFieldInput, FarFieldResult } from '@/lib/optics/farField';
 import { fieldClient } from '@/lib/optics/fieldClient';
-
-function inferno(t: number): [number, number, number] {
-  const c0 = [0.0002149, 0.001394, 0.00586];
-  const c1 = [0.258078, -0.008487, 0.505679];
-  const c2 = [0.781807, 0.252771, -0.651531];
-  const c3 = [0.710764, 0.958563, -0.130058];
-  const c4 = [-0.731634, -0.203976, 0.279767];
-  const out: number[] = [];
-  for (let i = 0; i < 3; i++) {
-    const v = c0[i] + t * (c1[i] + t * (c2[i] + t * (c3[i] + t * c4[i])));
-    out.push(Math.round(Math.min(1, Math.max(0, v)) * 255));
-  }
-  return [out[0], out[1], out[2]];
-}
+import { colorizeFarField } from '@/lib/optics/farFieldColor';
 
 /** Renders the Fourier-transform far-field (angular spectrum) of the pillar lattice field. */
 export class FarFieldRenderer {
@@ -32,6 +19,8 @@ export class FarFieldRenderer {
   private previousFrame = 0;
   private readonly dynamicRangeDb = 40;
   private off: HTMLCanvasElement;
+  private offContext: CanvasRenderingContext2D | null = null;
+  private image: ImageData | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -126,7 +115,6 @@ export class FarFieldRenderer {
       });
     }
     this.syncAnimation();
-    this.draw();
   }
 
   public resize(): void {
@@ -147,42 +135,24 @@ export class FarFieldRenderer {
     }
 
     const n = res.size;
-    this.off.width = n;
-    this.off.height = n;
-    const octx = this.off.getContext('2d');
-    if (!octx) return;
-    const img = octx.createImageData(n, n);
-    for (let i = 0; i < n * n; i++) {
-      const v = res.intensity[i];
-      let r: number, g: number, b: number;
-      if (this.mode === 'field') {
-        const value = Math.max(-1, Math.min(1, res.real[i] * Math.cos(4 * Math.PI * this.animationTime) + res.imaginary[i] * Math.sin(4 * Math.PI * this.animationTime)));
-        const base = [10, 13, 23];
-        const target = value >= 0 ? [31, 217, 255] : [255, 51, 115];
-        const amount = Math.abs(value);
-        [r, g, b] = base.map((c, channel) => Math.round(c + (target[channel] - c) * amount));
-      } else if (this.mode === 'phase') {
-        if (v < 1e-8) {
-          [r, g, b] = [10, 13, 23];
-        } else {
-          const hue = ((Math.atan2(res.imaginary[i], res.real[i]) - 4 * Math.PI * this.animationTime) / (2 * Math.PI) % 1 + 1) % 1;
-          const channel = (offset: number): number => {
-            const k = (offset + hue * 6) % 6;
-            return Math.round(255 * (1 - Math.max(0, Math.min(k, 4 - k, 1))));
-          };
-          [r, g, b] = [channel(5), channel(3), channel(1)];
-        }
-      } else {
-        const normalized = Math.min(1, v / this.intensityMax);
-        const t = this.logScale ? (normalized > 0 ? 1 + (10 * Math.log10(normalized)) / this.dynamicRangeDb : 0) : normalized;
-        [r, g, b] = inferno(Math.min(1, Math.max(0, t)));
-      }
-      img.data[i * 4] = r;
-      img.data[i * 4 + 1] = g;
-      img.data[i * 4 + 2] = b;
-      img.data[i * 4 + 3] = 255;
+    // Resizing a canvas reallocates its bitmap, so only do it when the result size changes.
+    if (this.off.width !== n || this.off.height !== n) {
+      this.off.width = n;
+      this.off.height = n;
+      this.offContext = null;
+      this.image = null;
     }
-    octx.putImageData(img, 0, 0);
+    const octx = this.offContext ?? (this.offContext = this.off.getContext('2d'));
+    if (!octx) return;
+    if (!this.image) this.image = octx.createImageData(n, n);
+    colorizeFarField(res, {
+      mode: this.mode,
+      time: this.animationTime,
+      intensityMax: this.intensityMax,
+      logScale: this.logScale,
+      dynamicRangeDb: this.dynamicRangeDb,
+    }, this.image.data);
+    octx.putImageData(this.image, 0, 0);
 
     ctx.fillStyle = '#03050a';
     ctx.fillRect(0, 0, w, h);

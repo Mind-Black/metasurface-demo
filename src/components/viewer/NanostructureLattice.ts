@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { opticsStore, OpticsState } from '@/lib/store/useOpticsStore';
 import { targetPhaseToDiameter } from '@/lib/optics/rcwaLut';
-import { aperturePhase } from '@/lib/optics/farField';
+import { aperturePhase, FarFieldInput } from '@/lib/optics/farField';
 
 export function latticePositions(diameter: number, pitch: number): Array<[number, number]> {
   const radius = diameter / 2;
@@ -18,14 +18,19 @@ export function latticePositions(diameter: number, pitch: number): Array<[number
   return positions;
 }
 
-export function latticeTargetPhase(state: OpticsState, x: number, y: number): number {
-  const phase = aperturePhase({ ...state, ...state.activeGradients }, x, y);
+/** Device description for `aperturePhase`; build once per rebuild rather than once per pillar. */
+export function latticePhaseInput(state: OpticsState): FarFieldInput {
+  return { ...state, ...state.activeGradients };
+}
+
+export function latticeTargetPhase(state: OpticsState, x: number, y: number, input = latticePhaseInput(state)): number {
+  const phase = aperturePhase(input, x, y);
   return ((phase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
 }
 
 /** Geometry is designed at λ0; changing the illumination must not resize it. */
-export function latticePillarGeometry(state: OpticsState, x: number, y: number) {
-  const targetPhase = latticeTargetPhase(state, x, y);
+export function latticePillarGeometry(state: OpticsState, x: number, y: number, input = latticePhaseInput(state)) {
+  const targetPhase = latticeTargetPhase(state, x, y, input);
   const diameterNm = targetPhaseToDiameter(targetPhase, state.designWavelength * 1000,
     state.heightNm, state.pitchNm, state.material);
   return { targetPhase, diameterNm };
@@ -34,6 +39,42 @@ export function latticePillarGeometry(state: OpticsState, x: number, y: number) 
 /** Phase-map pixel in a top view: screen up is physical +y. */
 export function latticePhaseMapCoordinates(row: number, col: number, size: number, diameter: number): [number, number] {
   return [((col + 0.5) / size - 0.5) * diameter, (0.5 - (row + 0.5) / size) * diameter];
+}
+
+/** CSS `hsl(h, 85%, 52%)` as sRGB bytes written into `out[at..at+2]`. */
+export function phaseColor(hueDegrees: number, out: Uint8ClampedArray, at: number): void {
+  const h = (((hueDegrees % 360) + 360) % 360) / 60;
+  const lightness = 0.52;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * 0.85;
+  const x = chroma * (1 - Math.abs((h % 2) - 1));
+  const m = lightness - chroma / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 1) { r = chroma; g = x; }
+  else if (h < 2) { r = x; g = chroma; }
+  else if (h < 3) { g = chroma; b = x; }
+  else if (h < 4) { g = x; b = chroma; }
+  else if (h < 5) { r = x; b = chroma; }
+  else { r = chroma; b = x; }
+  out[at] = Math.round((r + m) * 255);
+  out[at + 1] = Math.round((g + m) * 255);
+  out[at + 2] = Math.round((b + m) * 255);
+}
+
+/** RGBA top view of the target phase over the aperture; pixels outside it are transparent. */
+export function phaseMapPixels(state: OpticsState, size: number): Uint8ClampedArray<ArrayBuffer> {
+  const pixels = new Uint8ClampedArray(new ArrayBuffer(size * size * 4));
+  const input = latticePhaseInput(state);
+  const radiusSquared = state.diameter * state.diameter / 4;
+  for (let row = 0; row < size; row++) {
+    for (let col = 0; col < size; col++) {
+      const [x, y] = latticePhaseMapCoordinates(row, col, size, state.diameter);
+      if (x * x + y * y > radiusSquared) continue;
+      const at = (row * size + col) * 4;
+      phaseColor(latticeTargetPhase(state, x, y, input) / (2 * Math.PI) * 360, pixels, at);
+      pixels[at + 3] = 255;
+    }
+  }
+  return pixels;
 }
 
 export class NanostructureLatticeViewer {
@@ -63,7 +104,7 @@ export class NanostructureLatticeViewer {
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
       antialias: true,
-      alpha: true,
+      alpha: false,
       powerPreference: 'high-performance'
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -180,9 +221,10 @@ export class NanostructureLatticeViewer {
       this.scene.add(this.pillarMesh);
     }
     const targetMesh = this.pillarMesh;
+    const phaseInput = latticePhaseInput(state);
     let index = 0;
     for (const [x, y] of positions) {
-      const sample = latticePillarGeometry(state, x, y);
+      const sample = latticePillarGeometry(state, x, y, phaseInput);
       this.dummy.position.set(x, y, heightUm / 2);
       this.dummy.scale.set(sample.diameterNm / 2000, sample.diameterNm / 2000, heightUm);
       this.dummy.rotation.set(0, 0, 0);
@@ -207,16 +249,7 @@ export class NanostructureLatticeViewer {
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
     const size = canvas.width;
-    ctx.clearRect(0, 0, size, size);
-    for (let row = 0; row < size; row++) {
-      for (let col = 0; col < size; col++) {
-        const [x, y] = latticePhaseMapCoordinates(row, col, size, state.diameter);
-        if (x * x + y * y > state.diameter * state.diameter / 4) continue;
-        const phase = latticeTargetPhase(state, x, y);
-        ctx.fillStyle = `hsl(${phase / (2 * Math.PI) * 360}, 85%, 52%)`;
-        ctx.fillRect(col, row, 1, 1);
-      }
-    }
+    ctx.putImageData(new ImageData(phaseMapPixels(state, size), size, size), 0, 0);
   }
 
   public resetCamera(): void {

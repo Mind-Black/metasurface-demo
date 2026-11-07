@@ -3,6 +3,8 @@ import type { FarFieldInput } from '@/lib/optics/farField';
 import { computeFarField } from '@/lib/optics/farField';
 import { computeXY, computeXZ, deviceSpectrum } from '@/lib/optics/propagation';
 import { generateTargetBitmap, runGerchbergSaxton } from '@/lib/optics/gerchbergSaxton';
+import { colorizeFarField } from '@/lib/optics/farFieldColor';
+import { legacyColorize } from '../unit/helpers/legacyFarFieldColor';
 import { measure, reportAtEnd } from './harness';
 
 const mk = (over: Partial<FarFieldInput>): FarFieldInput => ({
@@ -50,5 +52,16 @@ describe('Gerchberg-Saxton', () => {
     const target = generateTargetBitmap('smiley');
     measure('GS | 15 iterations', () => { runGerchbergSaxton(target, 15); });
     measure('GS | 500 iterations', () => { runGerchbergSaxton(target, 500); }, 3);
+  });
+});
+
+describe('far-field recolour 256^2', () => {
+  it('draw loops', () => {
+    const result = computeFarField(cases['D30/532 lens'], 256, 1);
+    const data = new Uint8ClampedArray(256 * 256 * 4);
+    for (const mode of ['field', 'phase', 'intensity'] as const) {
+      measure(`recolour ${mode} | legacy loop`, () => { legacyColorize(result, mode, 0.3, 1, false, 40, data); }, 9);
+      measure(`recolour ${mode} | colorizeFarField`, () => { colorizeFarField(result, { mode, time: 0.3, intensityMax: 1, logScale: false, dynamicRangeDb: 40 }, data); }, 9);
+    }
   });
 });

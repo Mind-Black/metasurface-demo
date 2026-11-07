@@ -99,8 +99,6 @@ body {
 
 .dual-viewport-root {
   background: var(--bg-card);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-subtle);
   border-radius: 1rem;
   box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.7), 0 0 20px rgba(56, 189, 248, 0.05);

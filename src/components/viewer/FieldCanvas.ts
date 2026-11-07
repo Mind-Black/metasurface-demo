@@ -87,7 +87,7 @@ export abstract class FieldCanvas {
   protected abstract setUniforms(gl: WebGL2RenderingContext, state: OpticsState): void;
 
   private initWebGL(fragmentSource: string, uniforms: string[]): void {
-    const gl = this.canvas.getContext('webgl2', { antialias: true, powerPreference: 'high-performance' });
+    const gl = this.canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'default' });
     if (!gl) {
       console.error('WebGL2 not supported on this device.');
       return;

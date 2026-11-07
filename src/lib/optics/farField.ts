@@ -109,11 +109,21 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
   // Step 1: transform along y for each aperture column: T[oy][ix] = Σ_iy E[iy][ix]·K_y[oy][iy]
   const tRe = new Float64Array(outSize * nAp);
   const tIm = new Float64Array(outSize * nAp);
+  // Samples outside the circular aperture are exactly zero, so each row only needs its occupied span.
+  const spanLo = new Int32Array(nAp).fill(nAp);
+  const spanHi = new Int32Array(nAp).fill(-1);
+  for (let iy = 0; iy < nAp; iy++) {
+    for (let ix = 0; ix < nAp; ix++) {
+      if (coord[ix] * coord[ix] + coord[iy] * coord[iy] > radius * radius) continue;
+      if (ix < spanLo[iy]) spanLo[iy] = ix;
+      if (ix > spanHi[iy]) spanHi[iy] = ix;
+    }
+  }
   for (let oy = 0; oy < outSize; oy++) {
     for (let iy = 0; iy < nAp; iy++) {
       const kr = yRe[oy * nAp + iy];
       const ki = yIm[oy * nAp + iy];
-      for (let ix = 0; ix < nAp; ix++) {
+      for (let ix = spanLo[iy]; ix <= spanHi[iy]; ix++) {
         const er = eRe[iy * nAp + ix];
         const ei = eIm[iy * nAp + ix];
         tRe[oy * nAp + ix] += er * kr - ei * ki;
@@ -129,6 +139,8 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
   let maxI = 0;
   for (let oy = 0; oy < outSize; oy++) {
     for (let ox = 0; ox < outSize; ox++) {
+      // Directions beyond sinθ = 1 carry no power to the far field.
+      if (sx[ox] * sx[ox] + sy[oy] * sy[oy] > 1) continue;
       let sr = 0;
       let si = 0;
       for (let ix = 0; ix < nAp; ix++) {
@@ -139,8 +151,6 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
         sr += tr * kr - ti * ki;
         si += tr * ki + ti * kr;
       }
-      // Directions beyond sinθ = 1 carry no power to the far field.
-      if (sx[ox] * sx[ox] + sy[oy] * sy[oy] > 1) continue;
       const v = sr * sr + si * si;
       out[oy * outSize + ox] = v;
       real[oy * outSize + ox] = sr;
