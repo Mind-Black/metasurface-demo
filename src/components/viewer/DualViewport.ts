@@ -1012,7 +1012,7 @@ export class DualViewport {
         const formatted = formatIntensityValue(val);
         if (intensityDisplay) intensityDisplay.textContent = formatted;
         if (scaleMaxDisplay) scaleMaxDisplay.textContent = formatted;
-        this.wavefieldRenderer?.render();
+        this.wavefieldRenderer?.requestRender();
       }
     });
 
@@ -1024,7 +1024,7 @@ export class DualViewport {
         const formatted = formatIntensityValue(currentScale.nominalPeak);
         if (intensityDisplay) intensityDisplay.textContent = formatted;
         if (scaleMaxDisplay) scaleMaxDisplay.textContent = formatted;
-        this.wavefieldRenderer?.render();
+        this.wavefieldRenderer?.requestRender();
       }
     });
 
@@ -1259,8 +1259,8 @@ export class DualViewport {
         const deviceChanged = lastDeviceType !== state.deviceType;
         lastDeviceType = state.deviceType;
         calibrate(!deviceChanged);
-        this.wavefieldRenderer?.render();
-        this.xyRenderer?.render();
+        this.wavefieldRenderer?.requestRender();
+        this.xyRenderer?.requestRender();
       } else if (intensitySlider && document.activeElement !== intensitySlider && state.intensityMax !== undefined) {
         // If external store update directly changed intensityMax
         const currentSliderVal = parseFloat(intensitySlider.value);
@@ -1275,7 +1275,7 @@ export class DualViewport {
         }
       }
 
-      this.xyRenderer?.render();
+      this.xyRenderer?.requestRender();
       this.farFieldRenderer?.update();
     });
   }

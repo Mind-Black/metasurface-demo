@@ -84,6 +84,7 @@ export class XYProfileRenderer extends FieldCanvas {
 
   public toggleGrid(): boolean {
     this.showGrid = !this.showGrid;
+    this.requestRender();
     return this.showGrid;
   }
 }

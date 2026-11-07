@@ -91,6 +91,10 @@ export class NanostructureLatticeViewer {
   private needsRender: boolean = true;
   private phaseMapKey = '';
   private phaseMapMask: number[][] | null = null;
+  private visible = true;
+  /** The device changed while the viewer was hidden; rebuild when it is shown again. */
+  private stale = false;
+  private intersection: IntersectionObserver | null = null;
 
   private readonly MAX_GRID_SIZE = 201; // 50 µm aperture at 250 nm pitch
   private dummy = new THREE.Object3D();
@@ -142,6 +146,19 @@ export class NanostructureLatticeViewer {
     this.unsubscribe = opticsStore.subscribe(() => {
       this.updateLattice();
     });
+
+    if (typeof IntersectionObserver !== 'undefined') {
+      this.intersection = new IntersectionObserver((entries) => {
+        const visible = entries[entries.length - 1].isIntersecting;
+        if (visible === this.visible) return;
+        this.visible = visible;
+        if (!visible) return;
+        this.resize();
+        if (this.stale) this.updateLattice();
+        this.needsRender = true;
+      });
+      this.intersection.observe(container);
+    }
 
     this.start();
   }
@@ -199,6 +216,11 @@ export class NanostructureLatticeViewer {
 
   public updateLattice(): void {
     if (!this.pillarMesh) return;
+    if (!this.visible) {
+      this.stale = true;
+      return;
+    }
+    this.stale = false;
     const state = opticsStore.getState();
     const ag = state.activeGradients;
     const key = [state.diameter, state.designWavelength, state.focalLength,
@@ -274,7 +296,7 @@ export class NanostructureLatticeViewer {
     this.needsRender = true;
     const animate = () => {
       const controlsChanged = this.controls.update();
-      if (controlsChanged || this.needsRender) {
+      if (this.visible && (controlsChanged || this.needsRender)) {
         this.renderer.render(this.scene, this.camera);
         this.needsRender = false;
       }
@@ -292,6 +314,8 @@ export class NanostructureLatticeViewer {
 
   public destroy(): void {
     this.stop();
+    this.intersection?.disconnect();
+    this.intersection = null;
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = null;

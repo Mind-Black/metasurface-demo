@@ -129,6 +129,7 @@ export class WavefieldRenderer extends FieldCanvas {
 
   public toggleRays(): boolean {
     this.showRays = !this.showRays;
+    this.requestRender();
     return this.showRays;
   }
 

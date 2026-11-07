@@ -20,12 +20,24 @@ export class FarFieldRenderer {
   private readonly dynamicRangeDb = 40;
   private off: HTMLCanvasElement;
   private offContext: CanvasRenderingContext2D | null = null;
+  private visible = true;
+  private intersection: IntersectionObserver | null = null;
   private image: ImageData | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.off = document.createElement('canvas');
+    if (typeof IntersectionObserver !== 'undefined') {
+      this.intersection = new IntersectionObserver((entries) => {
+        const visible = entries[entries.length - 1].isIntersecting;
+        if (visible === this.visible) return;
+        this.visible = visible;
+        this.syncAnimation();
+        if (visible) this.draw();
+      }, { rootMargin: '200px' });
+      this.intersection.observe(canvas);
+    }
   }
 
   public setMode(mode: RenderMode): void {
@@ -36,7 +48,7 @@ export class FarFieldRenderer {
   }
 
   private syncAnimation(): void {
-    const shouldAnimate = this.mode !== 'intensity' && opticsStore.getState().isPlaying;
+    const shouldAnimate = this.visible && this.mode !== 'intensity' && opticsStore.getState().isPlaying;
     if (!shouldAnimate && this.animationId !== null) {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
@@ -191,6 +203,8 @@ export class FarFieldRenderer {
   }
 
   public destroy(): void {
+    this.intersection?.disconnect();
+    this.intersection = null;
     if (this.animationId !== null) cancelAnimationFrame(this.animationId);
     this.animationId = null;
     this.result = null;
