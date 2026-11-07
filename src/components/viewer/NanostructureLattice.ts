@@ -181,10 +181,9 @@ export class NanostructureLatticeViewer {
     const substrateMat = new THREE.MeshPhysicalMaterial({
       color: 0x94a3b8,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.15,
       roughness: 0.1,
       metalness: 0.05,
-      transmission: 0.7,
       ior: 1.45 // Fused silica
     });
     this.substrate = new THREE.Mesh(substrateGeom, substrateMat);
@@ -205,6 +204,11 @@ export class NanostructureLatticeViewer {
 
     // Circular nanopillars encode the phase for every device mode.
     const cylGeom = new THREE.CylinderGeometry(1, 1, 1, 16);
+    // The lower cap sits on the substrate and is never seen, so drop it: a quarter fewer triangles.
+    // CylinderGeometry emits the torso, then the top cap, then the bottom cap.
+    const bottomCap = cylGeom.groups[2];
+    cylGeom.setIndex(Array.from(cylGeom.index!.array.slice(0, bottomCap.start)));
+    cylGeom.groups.length = 2;
     cylGeom.rotateX(Math.PI / 2); // Orient along Z axis
     this.pillarMesh = new THREE.InstancedMesh(cylGeom, mat, count);
     this.pillarMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
