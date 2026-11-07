@@ -6,6 +6,7 @@
  */
 
 import { sampleHologramPhase } from './gerchbergSaxton';
+import { phaseResponse, TABLE_PITCH_UM } from './rcwaLut';
 
 export interface FarFieldInput {
   wavelength: number;        // operating wavelength [µm]
@@ -19,6 +20,8 @@ export interface FarFieldInput {
   vortex: boolean;
   hologram: boolean;
   cghPhaseMask?: number[][] | null;
+  /** Bypass the pillars: unit-amplitude ideal phase at point samples of this pitch [µm]. */
+  idealPitch?: number;
 }
 
 export interface FarFieldResult {
@@ -28,8 +31,6 @@ export interface FarFieldResult {
   imaginary: Float32Array;
   intensity: Float32Array; // row-major, normalized so max = 1, row 0 = sinθy = +sinMax (top)
 }
-
-const PITCH = 0.2; // aperture sampling pitch [µm]
 
 /** Transmitted aperture phase at (x, y) µm, matching the XZ/XY wavefield models. */
 export function aperturePhase(p: FarFieldInput, x: number, y: number): number {
@@ -47,20 +48,22 @@ export function aperturePhase(p: FarFieldInput, x: number, y: number): number {
 }
 
 /**
- * Far-field = 2D Fourier transform of the sampled aperture field, evaluated directly
+ * Far-field = 2D Fourier transform of the pillar lattice field, evaluated directly
  * on a window sinθ ∈ [-sinMax, sinMax]² (matrix Fourier transform). Because the
  * transform kernel is separable this costs O(M·N² + M²·N) and gives exact angular
  * resolution at any zoom, with no FFT zero-padding limits.
  */
 export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): FarFieldResult {
   const radius = p.diameter * 0.5;
-  const nAp = Math.max(8, Math.ceil(p.diameter / PITCH));
-  const step = p.diameter / nAp;
+  const ideal = p.idealPitch !== undefined;
+  const nAp = ideal ? Math.ceil(p.diameter / p.idealPitch!) : 2 * Math.floor(radius / TABLE_PITCH_UM) + 1;
+  const step = ideal ? p.diameter / nAp : TABLE_PITCH_UM;
   const k = (2 * Math.PI) / Math.max(0.05, p.wavelength);
+  const response = ideal ? null : phaseResponse(p.designWavelength, p.wavelength);
 
   // Aperture sample coordinates and field
   const coord = new Float64Array(nAp);
-  for (let i = 0; i < nAp; i++) coord[i] = -radius + (i + 0.5) * step;
+  for (let i = 0; i < nAp; i++) coord[i] = ideal ? -radius + (i + 0.5) * step : (i - (nAp - 1) / 2) * step;
   const eRe = new Float64Array(nAp * nAp); // [iy * nAp + ix]
   const eIm = new Float64Array(nAp * nAp);
   for (let iy = 0; iy < nAp; iy++) {
@@ -69,8 +72,15 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
       const y = coord[iy];
       if (x * x + y * y > radius * radius) continue;
       const ph = aperturePhase(p, x, y);
-      eRe[iy * nAp + ix] = Math.cos(ph);
-      eIm[iy * nAp + ix] = Math.sin(ph);
+      if (response) {
+        const size = response.re.length;
+        const bin = Math.floor((((ph / (2 * Math.PI)) % 1) + 1) % 1 * size) % size;
+        eRe[iy * nAp + ix] = response.re[bin];
+        eIm[iy * nAp + ix] = response.im[bin];
+      } else {
+        eRe[iy * nAp + ix] = Math.cos(ph);
+        eIm[iy * nAp + ix] = Math.sin(ph);
+      }
     }
   }
 
@@ -129,6 +139,8 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
         sr += tr * kr - ti * ki;
         si += tr * ki + ti * kr;
       }
+      // Directions beyond sinθ = 1 carry no power to the far field.
+      if (sx[ox] * sx[ox] + sy[oy] * sy[oy] > 1) continue;
       const v = sr * sr + si * si;
       out[oy * outSize + ox] = v;
       real[oy * outSize + ox] = sr;
@@ -136,7 +148,7 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
       if (v > maxI) maxI = v;
     }
   }
-  // Normalized to the peak within the displayed window
+  // Normalized to the propagating peak within the displayed window
   if (maxI > 0) {
     const amplitude = Math.sqrt(maxI);
     for (let i = 0; i < out.length; i++) {

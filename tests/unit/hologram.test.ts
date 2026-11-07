@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { opticsStore } from '@/lib/store/useOpticsStore';
 import { generateTargetBitmap, runGerchbergSaxton, sampleHologramPhase, dft2d, hologramPupilSamples } from '@/lib/optics/gerchbergSaxton';
 import { aperturePhase, computeFarField, FarFieldInput } from '@/lib/optics/farField';
-import { getDemonstrationIntensityScale } from '@/lib/optics/phaseProfiles';
 
 const original = { ...opticsStore.getState() };
 afterEach(() => opticsStore.update(original));
@@ -130,16 +129,6 @@ describe('hologram controls and reconstruction', () => {
       designWavelength: 0.532 } as FarFieldInput, -5, 5)).toBe(4);
   });
 
-  it('recalibrates the intensity controls when the phase mask changes', () => {
-    opticsStore.getState().setDeviceType('hologram');
-    const first = getDemonstrationIntensityScale(opticsStore.getState());
-    opticsStore.getState().setHologramTarget('smiley');
-    const second = getDemonstrationIntensityScale(opticsStore.getState());
-    expect(second).not.toBe(first);
-    expect(second.nominalPeak).not.toBe(first.nominalPeak);
-    expect(getDemonstrationIntensityScale(opticsStore.getState())).toBe(second);
-  });
-
   for (const target of ['crest', 'smiley', 'mu'] as const) {
     it(`reconstructs ${target} upright through the actual circular-aperture far-field renderer`, () => {
       const bitmap = generateTargetBitmap(target);
@@ -149,7 +138,7 @@ describe('hologram controls and reconstruction', () => {
       const field = computeFarField({ wavelength, diameter, designWavelength: wavelength,
         focalLength: 25, deflectionAngle: 0, topologicalCharge: 1,
         lens: false, deflect: false, vortex: false, hologram: true,
-        cghPhaseMask: result.phaseMask }, 33, 16.5 * wavelength / diameter);
+        cghPhaseMask: result.phaseMask, idealPitch: 0.2 }, 33, 16.5 * wavelength / diameter);
       let onTarget = 0;
       let total = 0;
       for (let row = 0; row < 32; row++) for (let col = 0; col < 32; col++) {

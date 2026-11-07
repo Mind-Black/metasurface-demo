@@ -37,10 +37,11 @@ describe('phase retrieval to pillar geometry and map', () => {
       const sample = latticePillarGeometry(state, x, y);
       const retrieved = sampleHologramPhase(state.cghPhaseMask, x, y, state.diameter);
       expect(circularError(sample.targetPhase, retrieved)).toBeLessThan(1e-12);
-      const forward = queryUnitCellLUT(sample.diameterNm, 532, 600, 400, 'TiO2');
-      expect(circularError(forward.phase, retrieved)).toBeLessThan(1e-10);
-      expect(sample.diameterNm / 2000).toBeGreaterThan(0.04); // Three uses radius in µm.
-      expect(sample.diameterNm / 2000).toBeLessThan(0.171);
+      const forward = queryUnitCellLUT(sample.diameterNm, 532, 600, 250, 'TiO2');
+      expect(forward.fabFeasible).toBe(true);
+      expect(circularError(forward.phase, retrieved)).toBeLessThan(0.5);
+      expect(sample.diameterNm / 2000).toBeGreaterThanOrEqual(0.03); // Three uses radius in µm.
+      expect(sample.diameterNm / 2000).toBeLessThanOrEqual(0.105);
     }
     const topLeft = latticePhaseMapCoordinates(0, 0, 128, 30);
     const bottomRight = latticePhaseMapCoordinates(127, 127, 128, 30);

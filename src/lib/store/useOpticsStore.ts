@@ -35,14 +35,14 @@ export interface OpticsState {
   stokes: [number, number, number, number];
 
   // Nominal pillar geometry
-  pitchNm: number;          // unit cell period (e.g. 400 nm)
+  pitchNm: number;          // unit cell period (e.g. 250 nm)
   heightNm: number;         // structure height (e.g. 600 nm)
 
   // Rendering State
   renderMode: RenderMode;
   intensityScale: 'linear' | 'log';
   isPlaying: boolean;
-  intensityMax: number;     // upper limit for intensity colormap mapping (default 6.0)
+  intensityMax: number;     // upper limit for intensity colormap mapping
 
   // Hologram options
   hologramTarget: 'crest' | 'smiley' | 'mu';
@@ -103,12 +103,12 @@ class OpticsStore {
       xyZoom: 1.0,
       xyViewMode: 'panel',
       stokes: [1, 0, 0, 1], // Right Circular Polarization (RCP)
-      pitchNm: 400,
+      pitchNm: 250,
       heightNm: 600,
       renderMode: 'field',
       intensityScale: 'linear',
       isPlaying: true,
-      intensityMax: 6.0,
+      intensityMax: 1.0,
       hologramTarget: 'crest',
       hologramIterations: 15,
       cghPhaseMask: null,

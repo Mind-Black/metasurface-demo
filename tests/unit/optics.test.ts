@@ -9,7 +9,6 @@ import {
   calculateChromaticFocalShift,
   calculateDeflectionAngle,
   getPBRotationAngle,
-  estimateDemonstrationMaxIntensity,
   getDemonstrationIntensityScale,
   formatIntensityValue
 } from '@/lib/optics/phaseProfiles';
@@ -207,48 +206,15 @@ describe('Edge Cases, Extreme Parameters & Boundary Diagnostics', () => {
 });
 
 describe('Dynamic Intensity Range Scaling Across Demonstrations', () => {
-  it('correctly calculates actual peak intensities across different optical demonstrations', () => {
-    const metalensMax = estimateDemonstrationMaxIntensity({ deviceType: 'metalens' });
-    expect(metalensMax).toBeGreaterThan(3.0);
-    expect(metalensMax).toBeLessThan(7.0);
-
-    const deflectorMax = estimateDemonstrationMaxIntensity({ deviceType: 'deflector' });
-    expect(deflectorMax).toBeGreaterThan(0.05);
-    expect(deflectorMax).toBeLessThan(0.3);
-
-    const vortexMax = estimateDemonstrationMaxIntensity({ deviceType: 'vortex' });
-    expect(vortexMax).toBeGreaterThan(0.04);
-    expect(vortexMax).toBeLessThan(0.25);
-
-    const hologramMax = estimateDemonstrationMaxIntensity({ deviceType: 'hologram' });
-    expect(hologramMax).toBeGreaterThan(0.1);
-    expect(hologramMax).toBeLessThan(0.6);
-  });
-
-  it('guarantees constant number of ticks (100) while dynamically scaling the range', () => {
-    const devices = ['metalens', 'deflector', 'vortex', 'hologram'] as const;
-
-    for (const device of devices) {
-      const scale = getDemonstrationIntensityScale({ deviceType: device });
+  it('guarantees constant number of ticks (100) while scaling the range to the solved peak', () => {
+    for (const peak of [0.02, 1.8, 4.6, 1700]) {
+      const scale = getDemonstrationIntensityScale(peak);
       expect(scale.ticks).toBe(100);
-      expect(scale.min).toBeLessThan(scale.nominalPeak);
-      expect(scale.max).toBeGreaterThan(scale.nominalPeak);
-
-      // Verify exact 100 ticks step relationship
-      const numSteps = (scale.max - scale.min) / scale.step;
-      expect(numSteps).toBeCloseTo(100, 3);
+      expect(scale.nominalPeak).toBe(peak);
+      expect(scale.min).toBeLessThan(peak);
+      expect(scale.max).toBeGreaterThan(peak);
+      expect((scale.max - scale.min) / scale.step).toBeCloseTo(100, 3);
     }
-  });
-
-  it('prevents low-intensity demonstrations from being invisible by scaling ranges appropriately', () => {
-    const deflectorScale = getDemonstrationIntensityScale({ deviceType: 'deflector' });
-    // In deflector, max should be well below 1.0 (around 0.24) so it is not pushed to the first tick of a 25.0 range
-    expect(deflectorScale.max).toBeLessThan(0.5);
-    expect(deflectorScale.min).toBeLessThan(0.02);
-
-    const vortexScale = getDemonstrationIntensityScale({ deviceType: 'vortex' });
-    expect(vortexScale.max).toBeLessThan(0.5);
-    expect(vortexScale.min).toBeLessThan(0.02);
   });
 
   it('formats intensity readouts cleanly with scale-appropriate precision', () => {

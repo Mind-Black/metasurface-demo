@@ -51,7 +51,7 @@ export class NanostructureLatticeViewer {
   private phaseMapKey = '';
   private phaseMapMask: number[][] | null = null;
 
-  private readonly MAX_GRID_SIZE = 127; // 50 µm aperture at 400 nm pitch
+  private readonly MAX_GRID_SIZE = 201; // 50 µm aperture at 250 nm pitch
   private dummy = new THREE.Object3D();
   private color = new THREE.Color();
 

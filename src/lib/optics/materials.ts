@@ -3,17 +3,17 @@ export interface MaterialDispersion {
 }
 
 /**
- * Modified Devore / Sarkar model for thin-film ALD TiO2
- * Transparent across visible spectrum (400 - 700 nm) with bandgap cutoff in near-UV.
+ * Amorphous ALD TiO2: the Devore rutile dispersion scaled so n(633 nm) = 2.41, a measured ALD
+ * value. ALD index depends on process (reports span roughly 2.1-2.7), so this is representative,
+ * not a specific film. The absorption tail is an illustrative Urbach edge, not fitted data.
+ * Keep in sync with tools/rcwa/generate_unit_cell_table.py.
  */
 export const TiO2_Dispersion: MaterialDispersion = {
   getRefractiveIndex(lambdaNm: number): { n: number; k: number } {
     const lamUm = Math.max(0.35, lambdaNm / 1000.0);
-    const denom = lamUm * lamUm - 0.0803;
-    const term = denom > 0.001 ? 0.2441 / denom : 0.2441 / 0.001;
-    const n = Math.sqrt(Math.max(1.0, 5.913 + term));
-    // Urbach tail absorption in near-UV / blue cutoff (< 420 nm)
-    const k = lamUm < 0.42 ? 0.08 * Math.exp(-(lamUm - 0.38) / 0.02) : 0.0001;
+    const rutile2 = 5.913 + 0.2441 / (lamUm * lamUm - 0.0803);
+    const n = Math.sqrt(1 + 0.847 * (rutile2 - 1));
+    const k = 0.08 * Math.exp(-(lamUm - 0.38) / 0.02);
     return { n, k };
   }
 };

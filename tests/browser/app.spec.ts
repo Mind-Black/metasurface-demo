@@ -48,16 +48,16 @@ test.describe('Optical Metasurfaces Platform E2E Tests', () => {
     const intensitySlider = page.locator('#slider-intensity-max');
     await expect(intensitySlider).toBeVisible();
 
-    // Verify slider range is dynamically calibrated to low-intensity Vortex beam (max < 0.5)
-    const vortexMaxStr = await intensitySlider.getAttribute('max');
-    const vortexMax = parseFloat(vortexMaxStr || '1');
-    expect(vortexMax).toBeLessThan(0.5);
+    // The slider is calibrated to the solved field: a vortex peaks near the incident intensity.
+    await expect.poll(async () => parseFloat(await intensitySlider.getAttribute('max') || '0')).toBeLessThan(20);
 
     // Adjust max intensity value
-    await intensitySlider.fill('0.10');
-    await intensitySlider.dispatchEvent('input');
-    await expect(page.locator('#intensity-max-display')).toHaveText('0.100');
-    await expect(page.locator('#intensity-scale-max')).toHaveText('0.100');
+    await intensitySlider.evaluate((el: HTMLInputElement) => {
+      el.value = String((Number(el.min) + Number(el.max)) / 2);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const shown = await page.locator('#intensity-max-display').textContent();
+    await expect(page.locator('#intensity-scale-max')).toHaveText(shown || '');
 
     // Switch back to 'field' and verify panel is hidden
     const fieldBtn = page.locator('#wavefield-card button[data-render="field"]');

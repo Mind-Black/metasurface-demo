@@ -1,5 +1,6 @@
 import { opticsStore, RenderMode } from '@/lib/store/useOpticsStore';
-import { computeFarField, FarFieldInput, FarFieldResult } from '@/lib/optics/farField';
+import { FarFieldInput, FarFieldResult } from '@/lib/optics/farField';
+import { fieldClient } from '@/lib/optics/fieldClient';
 
 function inferno(t: number): [number, number, number] {
   const c0 = [0.0002149, 0.001394, 0.00586];
@@ -15,7 +16,7 @@ function inferno(t: number): [number, number, number] {
   return [out[0], out[1], out[2]];
 }
 
-/** Renders the Fourier-transform far-field (angular spectrum) of the aperture field. */
+/** Renders the Fourier-transform far-field (angular spectrum) of the pillar lattice field. */
 export class FarFieldRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D | null;
@@ -118,7 +119,11 @@ export class FarFieldRenderer {
     if (key !== this.lastKey || (input.hologram && input.cghPhaseMask !== this.lastMask)) {
       this.lastKey = key;
       this.lastMask = input.cghPhaseMask;
-      this.result = computeFarField(input, 256, this.sinMax);
+      fieldClient.request({ kind: 'far', device: input, halfX: this.sinMax, halfV: 0, nx: 256, nv: 256 }, ({ far }) => {
+        if (!far) return;
+        this.result = far;
+        this.draw();
+      });
     }
     this.syncAnimation();
     this.draw();

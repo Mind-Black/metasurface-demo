@@ -4,6 +4,7 @@ import { NanostructureLatticeViewer } from './NanostructureLattice';
 import { XYProfileRenderer } from './XYProfileCanvas';
 import { FarFieldRenderer } from './FarFieldCanvas';
 import { getDemonstrationIntensityScale, formatIntensityValue, IntensityScaleRange, calculateDeflectionAngle, calculateChromaticFocalShift } from '@/lib/optics/phaseProfiles';
+import { deviceFromState, fieldClient } from '@/lib/optics/fieldClient';
 
 export class DualViewport {
   private container: HTMLElement;
@@ -12,6 +13,7 @@ export class DualViewport {
   private xyRenderer: XYProfileRenderer | null = null;
   private farFieldRenderer: FarFieldRenderer | null = null;
   private unsubscribe: (() => void) | null = null;
+  private focusZ: number | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -56,7 +58,7 @@ export class DualViewport {
           <div class="viewport-card mobile-active" id="lattice-card">
             <div class="viewport-header-badge">
               <span class="badge-label">3D Nanostructure Lattice</span>
-              <span class="badge-info">400 nm pitch · D = <span id="lattice-diameter">30.0</span> µm</span>
+              <span class="badge-info">250 nm pitch · D = <span id="lattice-diameter">30.0</span> µm</span>
             </div>
             <div class="viewport-actions"><button class="icon-btn" id="btn-reset-cam" title="Reset 3D Camera" aria-label="Reset Camera">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
@@ -76,7 +78,7 @@ export class DualViewport {
           <div class="viewport-card" id="wavefield-card">
             <div class="viewport-header-badge">
               <span class="badge-label">Wavefield Cross-Section</span>
-              <span class="badge-info">Huygens–Fresnel diffraction</span>
+              <span class="badge-info">Pillar field, y = 0 slice</span>
             </div>
 
             <div class="viewport-actions"><button class="icon-btn" id="btn-toggle-rays" title="Toggle Geometric Rays Overlay" aria-label="Toggle Rays">
@@ -131,7 +133,7 @@ export class DualViewport {
           <div class="viewport-card" id="farfield-card">
             <div class="viewport-header-badge">
               <span class="badge-label">Far-Field (Fourier Transform)</span>
-              <span class="badge-info" title="Fraunhofer far-field of the ideal aperture = 2D Fourier transform; sinθ = λ·f. Dashed circle: sinθ = 1.">FT{E} vs. sin θ</span>
+              <span class="badge-info" title="Fraunhofer far-field of the pillar lattice = 2D Fourier transform; sinθ = λ·f. Dashed circle: sinθ = 1, beyond it light is evanescent.">FT{E} vs. sin θ</span>
             </div>
             <div class="segmented-control farfield-render-mode" role="tablist" aria-label="Far-field render mode">
               <button type="button" class="seg-btn active" data-render="field" role="tab" aria-selected="true">Wave</button>
@@ -187,8 +189,8 @@ export class DualViewport {
               <div class="xy-quick-row">
                 <div class="xy-snap-chips">
                   <button type="button" class="xy-snap-chip" data-snap-z="0" title="Snap to Metasurface Substrate (z = 0)">z = 0</button>
-                  <button type="button" class="xy-snap-chip active" data-snap-z="focal" title="Snap to Focal Plane (z = f)">z = f</button>
-                  <button type="button" class="xy-snap-chip" data-snap-z="50" title="Snap to Far Field (z = 50 µm)">z = 50µm</button>
+                  <button type="button" class="xy-snap-chip active" data-snap-z="focal" title="Snap to the brightest focus">z = f</button>
+                  <button type="button" class="xy-snap-chip" data-snap-z="50" title="Snap to z = 50 µm. This is still the near field: the Fraunhofer distance 2D²/λ is thousands of micrometers.">z = 50µm</button>
                 </div>
               </div>
             </div>
@@ -363,7 +365,7 @@ export class DualViewport {
               <div class="demo-control-group">
                 <div class="demo-control-label-row">
                   <label for="demo-slider-focal" class="demo-label">
-                    <span>Focal Length at Current Wavelength (<span class="math-tex">f</span>):</span>
+                    <span>Paraxial Focal Length at Current Wavelength (<span class="math-tex">f</span>):</span>
                   </label>
                   <span id="demo-label-focal" class="demo-val">25.0 µm</span>
                 </div>
@@ -408,7 +410,7 @@ export class DualViewport {
               <div class="demo-control-group">
                 <div class="demo-control-label-row">
                   <label for="demo-slider-deflection" class="demo-label">
-                    <span>Deflection Angle (<span class="math-tex">\theta</span>):</span>
+                    <span>Design Deflection Angle (<span class="math-tex">\theta_0</span>):</span>
                   </label>
                   <span id="demo-label-deflection" class="demo-val">+20.0°</span>
                 </div>
@@ -422,6 +424,7 @@ export class DualViewport {
                   value="20"
                   aria-label="Demonstration Deflection Angle"
                 />
+                <div class="demo-helper-note" id="demo-actual-angle"></div>
                 <div class="demo-presets-row">
                   <button type="button" class="demo-chip" data-demo-deg="-30">-30°</button>
                   <button type="button" class="demo-chip" data-demo-deg="0">0°</button>
@@ -448,7 +451,7 @@ export class DualViewport {
                   aria-label="Demonstration Phase Gradient Period"
                 />
                 <div class="demo-helper-note">
-                  <span class="math-tex">\Gamma = \lambda / \sin\theta</span>
+                  <span class="math-tex">\Gamma = \lambda_0 / \sin\theta_0</span>
                 </div>
               </div>
 
@@ -772,8 +775,8 @@ export class DualViewport {
           opticsStore.getState().setProbeZ(0.0);
         } else if (target === 'focal') {
           const state = opticsStore.getState();
-          const focal = calculateChromaticFocalShift(state.designWavelength, state.wavelength, state.focalLength).operationalFocalLength;
-          opticsStore.getState().setProbeZ(Math.min(60, focal));
+          const paraxial = calculateChromaticFocalShift(state.designWavelength, state.wavelength, state.focalLength).operationalFocalLength;
+          opticsStore.getState().setProbeZ(Math.min(60, this.focusZ ?? paraxial));
         } else if (target === '50') {
           opticsStore.getState().setProbeZ(50.0);
         }
@@ -872,10 +875,10 @@ export class DualViewport {
         opticsStore.getState().setDeflectionAngle(rad);
 
         // Sync period slider
-        const lambda = opticsStore.getState().wavelength;
+        const lambda0 = opticsStore.getState().designWavelength;
         const sinTheta = Math.abs(Math.sin(rad));
         if (sinTheta > 0.01 && demoPeriodSlider) {
-          const periodUm = Math.min(3.5, Math.max(0.6, lambda / sinTheta));
+          const periodUm = Math.min(3.5, Math.max(0.6, lambda0 / sinTheta));
           demoPeriodSlider.value = periodUm.toFixed(2);
           const labelPeriod = this.container.querySelector('#demo-label-period');
           if (labelPeriod) labelPeriod.textContent = `${periodUm.toFixed(2)} µm`;
@@ -886,8 +889,8 @@ export class DualViewport {
     demoPeriodSlider?.addEventListener('input', () => {
       const periodUm = parseFloat(demoPeriodSlider.value);
       if (!isNaN(periodUm)) {
-        const lambda = opticsStore.getState().wavelength;
-        const thetaRad = calculateDeflectionAngle(lambda, (2 * Math.PI) / periodUm);
+        const lambda0 = opticsStore.getState().designWavelength;
+        const thetaRad = calculateDeflectionAngle(lambda0, (2 * Math.PI) / periodUm);
         if (!Number.isNaN(thetaRad)) {
           opticsStore.getState().setDeflectionAngle(thetaRad);
           if (demoDeflectSlider) {
@@ -946,7 +949,7 @@ export class DualViewport {
     const tickMid = this.container.querySelector<HTMLElement>('#intensity-tick-mid');
     const tickMax = this.container.querySelector<HTMLElement>('#intensity-tick-max');
 
-    let currentScale: IntensityScaleRange = getDemonstrationIntensityScale(opticsStore.getState());
+    let currentScale: IntensityScaleRange = getDemonstrationIntensityScale(1);
     let relativePosition = 0.475; // ~50% default on slider, corresponding to nominal peak
     let lastDemonstrationKey = '';
     let lastDeviceType = opticsStore.getState().deviceType;
@@ -979,10 +982,20 @@ export class DualViewport {
       if (tickMax) tickMax.textContent = formatIntensityValue(scale.max);
     };
 
+    // Calibrates the display to the solved field and finds the true focus.
+    const calibrate = (preserveRelative: boolean) => {
+      const state = opticsStore.getState();
+      fieldClient.request({ kind: 'overview', device: deviceFromState(state), halfX: 30, halfV: 60, nx: 256, nv: 128 }, ({ field }) => {
+        if (!field) return;
+        this.focusZ = state.activeGradients.lens ? field.peakV : null;
+        applyScaleRange(getDemonstrationIntensityScale(field.peak), preserveRelative);
+      });
+    };
+
     // Initial state setup for intensity panel
     const initialStore = opticsStore.getState();
-    lastDemonstrationKey = `${initialStore.deviceType}_${initialStore.wavelength}_${initialStore.designWavelength}_${initialStore.focalLength}_${initialStore.diameter}_${initialStore.deflectionAngle}_${initialStore.topologicalCharge}_${Boolean(initialStore.cghPhaseMask)}`;
     applyScaleRange(currentScale, false);
+    calibrate(false);
     intensityPanel?.classList.toggle('hidden', initialStore.renderMode !== 'intensity');
     this.container.querySelector('#fft-intensity-panel')?.classList.toggle('hidden', initialStore.renderMode !== 'intensity');
     this.container.querySelector('.farfield-scale-toggle')?.classList.toggle('hidden', initialStore.renderMode !== 'intensity');
@@ -1112,7 +1125,7 @@ export class DualViewport {
         const target = chip.dataset.snapZ;
         let isSnapActive = false;
         if (target === '0') isSnapActive = Math.abs(pZ - 0.0) < 0.25;
-        else if (target === 'focal') isSnapActive = Math.abs(pZ - operationalFocal) < 0.25;
+        else if (target === 'focal') isSnapActive = Math.abs(pZ - (this.focusZ ?? operationalFocal)) < 0.25;
         else if (target === '50') isSnapActive = Math.abs(pZ - 50.0) < 0.25;
         chip.classList.toggle('active', isSnapActive);
       });
@@ -1190,7 +1203,15 @@ export class DualViewport {
       }
 
       const sinTheta = Math.abs(Math.sin(state.deflectionAngle));
-      const periodUm = sinTheta > 0.01 ? Math.min(3.5, Math.max(0.6, state.wavelength / sinTheta)) : 3.5;
+      const periodUm = sinTheta > 0.01 ? Math.min(3.5, Math.max(0.6, state.designWavelength / sinTheta)) : 3.5;
+      const actualSin = (state.wavelength / state.designWavelength) * Math.sin(state.deflectionAngle);
+      const actualAngle = this.container.querySelector('#demo-actual-angle');
+      if (actualAngle) {
+        const nm = (state.wavelength * 1000).toFixed(0);
+        actualAngle.textContent = Math.abs(actualSin) < 1
+          ? `At ${nm} nm this order leaves at ${((Math.asin(actualSin) * 180) / Math.PI).toFixed(1)}°`
+          : `At ${nm} nm this order is evanescent, so it carries no power`;
+      }
       const labelDemoPeriod = this.container.querySelector('#demo-label-period');
       if (labelDemoPeriod) labelDemoPeriod.textContent = `${periodUm.toFixed(2)} µm`;
       if (demoPeriodSlider && document.activeElement !== demoPeriodSlider) {
@@ -1237,8 +1258,7 @@ export class DualViewport {
         lastDemonstrationKey = demonstrationKey;
         const deviceChanged = lastDeviceType !== state.deviceType;
         lastDeviceType = state.deviceType;
-        const newScale = getDemonstrationIntensityScale(state);
-        applyScaleRange(newScale, !deviceChanged);
+        calibrate(!deviceChanged);
         this.wavefieldRenderer?.render();
         this.xyRenderer?.render();
       } else if (intensitySlider && document.activeElement !== intensitySlider && state.intensityMax !== undefined) {

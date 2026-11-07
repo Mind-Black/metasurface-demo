@@ -158,7 +158,7 @@ describe('OpticsStore Reactive State Management', () => {
   });
 
   it('correctly manages intensityMax parameter in reactive store for GPU wavefield intensity modality', () => {
-    expect(opticsStore.getState().intensityMax).toBe(6.0);
+    expect(opticsStore.getState().intensityMax).toBe(1.0);
 
     let observedVal = 0;
     const unsubscribe = opticsStore.subscribe((state) => {
