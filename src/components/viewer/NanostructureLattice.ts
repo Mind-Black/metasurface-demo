@@ -3,6 +3,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { opticsStore, OpticsState } from '@/lib/store/useOpticsStore';
 import { targetPhaseToDiameter } from '@/lib/optics/rcwaLut';
 import { aperturePhase, FarFieldInput } from '@/lib/optics/farField';
+import { pbResponse } from '@/lib/optics/finLut';
+import { pbFinAngle } from '@/lib/optics/polarization';
 
 export function latticePositions(diameter: number, pitch: number): Array<[number, number]> {
   const radius = diameter / 2;
@@ -34,6 +36,16 @@ export function latticePillarGeometry(state: OpticsState, x: number, y: number, 
   const diameterNm = targetPhaseToDiameter(targetPhase, state.designWavelength * 1000,
     state.heightNm, state.pitchNm, state.material);
   return { targetPhase, diameterNm };
+}
+
+/**
+ * PB nanofin at (x, y): every fin is the same (chosen for λ0), rotated by θ = φ/2 about z so that
+ * RCP in → LCP out picks up the target phase φ.
+ */
+export function latticeFinGeometry(state: OpticsState, x: number, y: number, input = latticePhaseInput(state)) {
+  const targetPhase = latticeTargetPhase(state, x, y, input);
+  const fin = pbResponse(state.designWavelength, state.designWavelength);
+  return { targetPhase, angle: pbFinAngle(targetPhase), lengthNm: fin.lengthNm, widthNm: fin.widthNm };
 }
 
 /** Phase-map pixel in a top view: screen up is physical +y. */
@@ -85,6 +97,7 @@ export class NanostructureLatticeViewer {
   private camera: THREE.PerspectiveCamera;
   private controls: OrbitControls;
   private pillarMesh: THREE.InstancedMesh | null = null;
+  private finMesh: THREE.InstancedMesh | null = null;
   private substrate: THREE.Mesh | null = null;
   private animId: number | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -214,16 +227,28 @@ export class NanostructureLatticeViewer {
     this.pillarMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.scene.add(this.pillarMesh);
 
+    // Rectangular nanofins for the PB mechanism, long axis along x before rotation. BoxGeometry emits
+    // its faces as +x, −x, +y, −y, +z, −z; the −z face sits on the substrate, so drop it.
+    const boxGeom = new THREE.BoxGeometry(1, 1, 1);
+    const bottomFace = boxGeom.groups[5];
+    boxGeom.setIndex(Array.from(boxGeom.index!.array.slice(0, bottomFace.start)));
+    boxGeom.groups.length = 5;
+    this.finMesh = new THREE.InstancedMesh(boxGeom, mat, 1);
+    this.finMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.finMesh.visible = false;
+    this.scene.add(this.finMesh);
+
     this.updateLattice();
   }
 
   public updateLattice(): void {
-    if (!this.pillarMesh) return;
+    if (!this.pillarMesh || !this.finMesh) return;
     const state = opticsStore.getState();
     const ag = state.activeGradients;
+    const fins = state.phaseMechanism === 'pb';
     const key = [state.diameter, state.designWavelength, state.focalLength,
       state.deflectionAngle, state.topologicalCharge, state.heightNm, state.pitchNm,
-      state.material,
+      state.material, state.phaseMechanism,
       ag.lens, ag.deflect, ag.vortex, ag.hologram].join(':');
     if (key === this.phaseMapKey && state.cghPhaseMask === this.phaseMapMask) return;
 
@@ -232,22 +257,35 @@ export class NanostructureLatticeViewer {
     const heightUm = state.heightNm / 1000;
     const pitch = state.pitchNm / 1000;
     const positions = latticePositions(state.diameter, pitch);
-    if (positions.length > this.pillarMesh.instanceMatrix.count) {
-      const old = this.pillarMesh;
-      this.pillarMesh = new THREE.InstancedMesh(old.geometry, old.material, positions.length);
-      this.pillarMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    let targetMesh = fins ? this.finMesh : this.pillarMesh;
+    if (positions.length > targetMesh.instanceMatrix.count) {
+      const old = targetMesh;
+      targetMesh = new THREE.InstancedMesh(old.geometry, old.material, positions.length);
+      targetMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       this.scene.remove(old);
       old.dispose();
-      this.scene.add(this.pillarMesh);
+      this.scene.add(targetMesh);
+      if (fins) this.finMesh = targetMesh;
+      else this.pillarMesh = targetMesh;
     }
-    const targetMesh = this.pillarMesh;
+    this.pillarMesh.visible = !fins;
+    this.finMesh.visible = fins;
     const phaseInput = latticePhaseInput(state);
     let index = 0;
     for (const [x, y] of positions) {
-      const sample = latticePillarGeometry(state, x, y, phaseInput);
+      let sample: { targetPhase: number };
       this.dummy.position.set(x, y, heightUm / 2);
-      this.dummy.scale.set(sample.diameterNm / 2000, sample.diameterNm / 2000, heightUm);
-      this.dummy.rotation.set(0, 0, 0);
+      if (fins) {
+        const fin = latticeFinGeometry(state, x, y, phaseInput);
+        this.dummy.scale.set(fin.lengthNm / 1000, fin.widthNm / 1000, heightUm);
+        this.dummy.rotation.set(0, 0, fin.angle);
+        sample = fin;
+      } else {
+        const pillar = latticePillarGeometry(state, x, y, phaseInput);
+        this.dummy.scale.set(pillar.diameterNm / 2000, pillar.diameterNm / 2000, heightUm);
+        this.dummy.rotation.set(0, 0, 0);
+        sample = pillar;
+      }
       this.dummy.updateMatrix();
       targetMesh.setMatrixAt(index, this.dummy.matrix);
       // CSS map colors are sRGB; convert the same hues for Three's linear scene.

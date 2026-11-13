@@ -1,6 +1,6 @@
 import { opticsStore, OpticsState } from '@/lib/store/useOpticsStore';
 import { fieldClient, FieldRequest } from '@/lib/optics/fieldClient';
-import { deviceKey } from '@/lib/optics/propagation';
+import { deviceKey, FieldWindow } from '@/lib/optics/propagation';
 
 const VS_SOURCE = `#version 300 es
 in vec2 aPosition;
@@ -30,9 +30,10 @@ vec3 phaseColormap(float phase) {
   return 0.5 + 0.5 * cos(2.0 * PI * norm + vec3(0.0, 2.0, 4.0) * PI / 3.0);
 }
 
-// Complex field at normalized coordinates, bilinear in re and im (RG32F is not filterable).
-vec2 sampleField(vec2 uv) {
-  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return vec2(0.0);
+// Two complex components (A.re, A.im, B.re, B.im) at normalized coordinates, bilinear in each part
+// (RGBA32F is not filterable). A is the displayed component; |A|² + |B|² is the total intensity.
+vec4 sampleField(vec2 uv) {
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return vec4(0.0);
   ivec2 size = textureSize(uField, 0);
   vec2 p = uv * vec2(size) - 0.5;
   ivec2 i = ivec2(floor(p));
@@ -40,12 +41,12 @@ vec2 sampleField(vec2 uv) {
   ivec2 hi = size - 1;
   ivec2 a = clamp(i, ivec2(0), hi);
   ivec2 b = clamp(i + 1, ivec2(0), hi);
-  vec2 row0 = mix(texelFetch(uField, a, 0).rg, texelFetch(uField, ivec2(b.x, a.y), 0).rg, f.x);
-  vec2 row1 = mix(texelFetch(uField, ivec2(a.x, b.y), 0).rg, texelFetch(uField, b, 0).rg, f.x);
+  vec4 row0 = mix(texelFetch(uField, a, 0), texelFetch(uField, ivec2(b.x, a.y), 0), f.x);
+  vec4 row1 = mix(texelFetch(uField, ivec2(a.x, b.y), 0), texelFetch(uField, b, 0), f.x);
   return mix(row0, row1, f.y);
 }
 
-vec3 fieldColor(vec2 field, int mode, int logScale, float intensityMax) {
+vec3 fieldColor(vec2 field, float intensity, int mode, int logScale, float intensityMax) {
   if (mode == 0) {
     float val = clamp(field.x * 0.7, -1.0, 1.0);
     return val > 0.0
@@ -53,13 +54,28 @@ vec3 fieldColor(vec2 field, int mode, int logScale, float intensityMax) {
       : mix(vec3(0.04, 0.05, 0.09), vec3(1.0, 0.2, 0.45), -val);
   }
   if (mode == 1) {
-    float normI = clamp(dot(field, field) / max(0.001, intensityMax), 0.0, 1.0);
+    float normI = clamp(intensity / max(0.001, intensityMax), 0.0, 1.0);
     if (logScale == 1) normI = clamp(1.0 + log(max(normI, 0.0001)) / (4.0 * log(10.0)), 0.0, 1.0);
     return inferno(normI);
   }
   return phaseColormap(atan(field.y, field.x));
 }
 `;
+
+/** Packs the two components of a solved field as RGBA texels (B = 0 when the field has one). */
+export function interleave(field: FieldWindow): Float32Array {
+  const { data, dataB } = field;
+  const out = new Float32Array(2 * data.length);
+  for (let i = 0, j = 0; i < data.length; i += 2, j += 4) {
+    out[j] = data[i];
+    out[j + 1] = data[i + 1];
+    if (dataB) {
+      out[j + 2] = dataB[i];
+      out[j + 3] = dataB[i + 1];
+    }
+  }
+  return out;
+}
 
 /**
  * Displays a complex field solved off-thread. A new solve runs only when the device or view
@@ -134,7 +150,7 @@ export abstract class FieldCanvas {
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array(2));
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, new Float32Array(4));
   }
 
   private compileShader(type: number, source: string): WebGLShader | null {
@@ -162,7 +178,7 @@ export abstract class FieldCanvas {
       const gl = this.gl;
       if (!gl || !field) return;
       gl.bindTexture(gl.TEXTURE_2D, this.texture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, field.nx, field.ny, 0, gl.RG, gl.FLOAT, field.data);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, field.nx, field.ny, 0, gl.RGBA, gl.FLOAT, interleave(field));
       this.shown = solved;
       this.requestRender();
     });

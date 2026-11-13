@@ -58,8 +58,8 @@ export function getVortexBeamPhase(
 
 /**
  * Pancharatnam-Berry (PB) / Geometric Phase.
- * Imparts phase phi = 2 * sigma * theta for circularly polarized light,
- * where sigma = +1 for LCP, -1 for RCP, and theta is the in-plane rotation angle of the nanofin.
+ * The cross-polarized output carries phase phi = 2 * sigma * theta, where theta is the in-plane rotation
+ * angle of the nanofin and sigma = +1 for RCP input, -1 for LCP input (conventions in ./polarization.ts).
  */
 export function getPBRotationAngle(targetPhase: number, helicity: 1 | -1 = 1): number {
   const theta = (helicity * targetPhase) / 2;

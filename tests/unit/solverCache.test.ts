@@ -33,16 +33,20 @@ describe('device key and spectrum cache', () => {
     expect(deviceSpectrum(structuredClone(holo))).toBe(first);
   });
 
-  it('keeps two devices cached so A, B, A hits, and evicts on a third', () => {
-    const a = { ...base, focalLength: 20 };
-    const b = { ...base, focalLength: 30 };
-    const c = { ...base, focalLength: 40 };
+  it('keeps four spectra cached (two PB components of two devices) and evicts the least recent', () => {
+    const [a, b, c, d, e] = [20, 30, 40, 22, 35].map((focalLength) => ({ ...base, focalLength }));
     const sa = deviceSpectrum(a);
     const sb = deviceSpectrum(b);
+    deviceSpectrum(c);
+    deviceSpectrum(d);
     expect(deviceSpectrum(a)).toBe(sa);
     expect(deviceSpectrum(b)).toBe(sb);
-    deviceSpectrum(c);
+    deviceSpectrum(e); // evicts c, the least recently used
+    expect(deviceSpectrum(a)).toBe(sa);
+    deviceSpectrum(c); // evicts d
     expect(deviceSpectrum(b)).toBe(sb);
+    deviceSpectrum(d); // evicts e, then a is the oldest
+    deviceSpectrum(e);
     expect(deviceSpectrum(a)).not.toBe(sa);
   }, 60000);
 });

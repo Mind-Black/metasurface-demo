@@ -33,6 +33,9 @@ export function deviceFromState(state: OpticsState): FarFieldInput {
     deflectionAngle: state.deflectionAngle,
     topologicalCharge: state.topologicalCharge,
     ...gradients,
+    mechanism: state.phaseMechanism,
+    stokes: state.stokes,
+    analyzer: state.analyzer,
     // The mask is only read in hologram mode; leaving it out saves cloning it into the worker.
     cghPhaseMask: gradients.hologram ? state.cghPhaseMask : null,
   };

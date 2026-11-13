@@ -65,6 +65,38 @@ test.describe('Optical Metasurfaces Platform E2E Tests', () => {
     await expect(intensityPanel).toBeHidden();
   });
 
+  test('switches to PB phase and drives the input polarization and analyzer', async ({ page }) => {
+    const consoleErrors: string[] = [];
+    page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+    await page.goto('/');
+
+    const pbBtn = page.locator('button[data-mechanism="pb"]');
+    await pbBtn.click();
+    await expect(pbBtn).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#pol-fin-readout')).toContainText('helicity-converted');
+    await expect(page.locator('#pol-mechanism-note')).toContainText('θ = φ/2');
+
+    // Default input is RCP; switch to horizontal and check the Stokes readout and the ellipse glyph.
+    await expect(page.locator('button[data-pol="rcp"]')).toHaveClass(/active/);
+    await page.locator('button[data-pol="h"]').click();
+    await expect(page.locator('button[data-pol="h"]')).toHaveClass(/active/);
+    await expect(page.locator('#pol-stokes')).toHaveText('S = (+1.00, +0.00, +0.00)');
+    await expect(page.locator('#pol-handedness')).toHaveText('Linear 0°');
+
+    const chi = page.locator('#pol-slider-chi');
+    await chi.fill('-45');
+    await chi.dispatchEvent('input');
+    await expect(page.locator('button[data-pol="lcp"]')).toHaveClass(/active/);
+
+    const lcpAnalyzer = page.locator('button[data-analyzer="lcp"]');
+    await lcpAnalyzer.click();
+    await expect(lcpAnalyzer).toHaveAttribute('aria-pressed', 'true');
+
+    await page.locator('button[data-mechanism="dynamic"]').click();
+    await expect(page.locator('#pol-mechanism-note')).toContainText('isotropic');
+    expect(consoleErrors.filter((e) => !e.includes('favicon'))).toHaveLength(0);
+  });
+
   test('demonstration sliders close to visualizer update focal length and diameter', async ({ page }) => {
     await page.goto('/');
 

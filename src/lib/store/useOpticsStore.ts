@@ -1,4 +1,5 @@
 import { generateTargetBitmap, runGerchbergSaxton } from '@/lib/optics/gerchbergSaxton';
+import type { Analyzer, PhaseMechanism, Stokes } from '@/lib/optics/polarization';
 export const MAX_HOLOGRAM_ITERATIONS = 500;
 export type DeviceType = 'metalens' | 'deflector' | 'vortex' | 'hologram';
 export type MaterialType = 'TiO2' | 'Si';
@@ -31,8 +32,12 @@ export interface OpticsState {
   xyZoom: number;           // 1.0 = +/-25 um, 2.0 = +/-12.5 um, 5.0 = +/-5.0 um
   xyViewMode: 'panel' | 'inset'; // 'panel' = 3-panel split, 'inset' = PiP overlay in XZ card
 
-  // Polarization (Stokes Vector: S0, S1, S2, S3)
-  stokes: [number, number, number, number];
+  // Input polarization (Stokes vector S0..S3, S3 > 0 = RCP; see lib/optics/polarization.ts)
+  stokes: Stokes;
+  // Dynamic-phase pillars or Pancharatnam-Berry (geometric-phase) nanofins
+  phaseMechanism: PhaseMechanism;
+  // Output analyzer in front of the field views
+  analyzer: Analyzer;
 
   // Nominal pillar geometry
   pitchNm: number;          // unit cell period (e.g. 250 nm)
@@ -62,7 +67,9 @@ export interface OpticsState {
   setIntensityScale: (val: 'linear' | 'log') => void;
   setIsPlaying: (val: boolean) => void;
   setIntensityMax: (val: number) => void;
-  setStokes: (val: [number, number, number, number]) => void;
+  setStokes: (val: Stokes) => void;
+  setPhaseMechanism: (val: PhaseMechanism) => void;
+  setAnalyzer: (val: Analyzer) => void;
   setPitchNm: (val: number) => void;
   setHeightNm: (val: number) => void;
   setHologramTarget: (val: 'crest' | 'smiley' | 'mu') => void;
@@ -103,6 +110,8 @@ class OpticsStore {
       xyZoom: 1.0,
       xyViewMode: 'panel',
       stokes: [1, 0, 0, 1], // Right Circular Polarization (RCP)
+      phaseMechanism: 'dynamic',
+      analyzer: 'none',
       pitchNm: 250,
       heightNm: 600,
       renderMode: 'field',
@@ -158,7 +167,14 @@ class OpticsStore {
       setIntensityScale: (intensityScale) => this.update({ intensityScale }),
       setIsPlaying: (isPlaying) => this.update({ isPlaying }),
       setIntensityMax: (intensityMax) => this.update({ intensityMax }),
-      setStokes: (stokes) => this.update({ stokes }),
+      setStokes: (stokes) => {
+        if (!stokes.every(Number.isFinite) || Math.hypot(stokes[1], stokes[2], stokes[3]) === 0) {
+          throw new RangeError('The input polarization must be a finite, polarized Stokes vector.');
+        }
+        this.update({ stokes: [...stokes] as Stokes });
+      },
+      setPhaseMechanism: (phaseMechanism) => this.update({ phaseMechanism }),
+      setAnalyzer: (analyzer) => this.update({ analyzer }),
       setPitchNm: (pitchNm) => this.update({ pitchNm }),
       setHeightNm: (heightNm) => this.update({ heightNm }),
       setHologramTarget: (hologramTarget) => this.update({ hologramTarget }),

@@ -5,8 +5,9 @@
  * Assumes each pillar responds like one in a periodic array (locally periodic approximation),
  * unit-amplitude normal illumination, and no evanescent field at z > 0.
  */
-import { aperturePhase, FarFieldInput } from './farField';
+import { aperturePhase, cellField, deviceChannels, FarFieldInput } from './farField';
 import { fft } from './fft';
+import { ChannelMix, mixKey } from './polarization';
 import { phaseResponse, TABLE_PITCH_UM } from './rcwaLut';
 
 export { fft };
@@ -17,10 +18,12 @@ const TAU = 2 * Math.PI;
 const CULL = 1e-3;
 
 export interface FieldWindow {
-  data: Float32Array;  // interleaved re, im; row-major
+  data: Float32Array;  // displayed component A: interleaved re, im; row-major
+  /** Orthogonal component B (analyzer 'none'), so |A|² + |B|² is the total intensity. */
+  dataB?: Float32Array;
   nx: number;
   ny: number;
-  peak: number;        // max |E|²
+  peak: number;        // max |A|² + |B|²
   peakX: number;       // x of the peak [µm]
   peakV: number;       // y (XY) or z (XZ) of the peak [µm]
 }
@@ -157,11 +160,17 @@ function maskKey(mask: number[][]): string {
   return key;
 }
 
-/** Identifies everything that changes the transmitted field. */
-export function deviceKey(p: FarFieldInput): string {
+/** Identifies the scalar device: everything that changes the dynamic-phase lattice field. */
+function scalarKey(p: FarFieldInput): string {
   const mask = p.hologram && p.cghPhaseMask ? maskKey(p.cghPhaseMask) : '0';
   return [p.wavelength, p.designWavelength, p.focalLength, p.diameter, p.deflectionAngle,
     p.topologicalCharge, p.lens, p.deflect, p.vortex, p.hologram, mask].join('|');
+}
+
+/** Identifies everything that changes the displayed field, polarization included. */
+export function deviceKey(p: FarFieldInput): string {
+  const scalar = scalarKey(p);
+  return p.stokes ? [scalar, p.mechanism ?? 'dynamic', ...p.stokes, p.analyzer ?? 'none'].join('|') : scalar;
 }
 
 const wrapIndex = (i: number) => ((i % N) + N) % N;
@@ -169,7 +178,7 @@ const sinc = (x: number) => (Math.abs(x) < 1e-9 ? 1 : Math.sin(Math.PI * x) / (M
 
 /** Most recently used first. Two slots let a drag that alternates between two devices keep hitting. */
 const spectrumCache: Spectrum[] = [];
-const SPECTRUM_SLOTS = 2;
+const SPECTRUM_SLOTS = 4;
 
 /** Scratch for the 1024² transform, reused across calls so a cold spectrum allocates only its result. */
 const scratchRe = new Float64Array(N * N);
@@ -179,9 +188,16 @@ const columnIm = new Float64Array(N);
 const rowHasData = new Uint8Array(N);
 const columnNeeded = new Uint8Array(N);
 
-/** Angular spectrum of the lattice field, including every order that propagates in air. */
-export function deviceSpectrum(p: FarFieldInput): Spectrum {
-  const key = deviceKey(p);
+const cell = new Float64Array(2);
+
+/**
+ * Angular spectrum of the lattice field, including every order that propagates in air. `mix` selects
+ * a PB output channel; without it the cells carry the dynamic pillar response t(φ).
+ */
+export function deviceSpectrum(p: FarFieldInput, mix: ChannelMix | null = null): Spectrum {
+  const pb = mix !== null && p.mechanism === 'pb';
+  // Dynamic-phase spectra do not depend on polarization, which only scales them afterwards.
+  const key = pb ? `${scalarKey(p)}#pb#${mixKey(mix)}` : scalarKey(p);
   const hit = spectrumCache.findIndex((entry) => entry.key === key);
   if (hit === 0) return spectrumCache[0];
   if (hit > 0) {
@@ -191,7 +207,6 @@ export function deviceSpectrum(p: FarFieldInput): Spectrum {
   }
   const pitch = TABLE_PITCH_UM;
   const response = phaseResponse(p.designWavelength, p.wavelength);
-  const size = response.re.length;
   const re = scratchRe;
   const im = scratchIm;
   re.fill(0);
@@ -204,10 +219,9 @@ export function deviceSpectrum(p: FarFieldInput): Spectrum {
       const x = i * pitch;
       const y = j * pitch;
       if (x * x + y * y > radius * radius) continue;
-      const phase = aperturePhase(p, x, y);
-      const bin = Math.floor((((phase / TAU) % 1) + 1) % 1 * size) % size;
-      re[wrapIndex(j) * N + wrapIndex(i)] = response.re[bin];
-      im[wrapIndex(j) * N + wrapIndex(i)] = response.im[bin];
+      cellField(aperturePhase(p, x, y), response, mix, pb, cell);
+      re[wrapIndex(j) * N + wrapIndex(i)] = cell[0];
+      im[wrapIndex(j) * N + wrapIndex(i)] = cell[1];
       rowHasData[wrapIndex(j)] = 1;
     }
   }
@@ -336,9 +350,40 @@ function cztFor(inLen: number, outLen: number, f0: number, df: number, x0: numbe
   return czt;
 }
 
+interface Plane { re: Float64Array; im: Float64Array }
+
+/**
+ * Solves each displayed channel. Dynamic-phase channels are multiples of the one scalar field, so it is
+ * solved once and scaled; PB channels each need their own spectrum.
+ */
+function solveChannels(p: FarFieldInput, solve: (mix: ChannelMix | null) => Plane): Plane[] {
+  const mixes = deviceChannels(p);
+  if (!mixes) return [solve(null)];
+  if (p.mechanism === 'pb') return mixes.map((mix) => solve(mix));
+  const base = solve(null);
+  return mixes.map(({ scale }) => {
+    const re = new Float64Array(base.re.length);
+    const im = new Float64Array(base.re.length);
+    for (let i = 0; i < re.length; i++) {
+      re[i] = base.re[i] * scale.re - base.im[i] * scale.im;
+      im[i] = base.re[i] * scale.im + base.im[i] * scale.re;
+    }
+    return { re, im };
+  });
+}
+
 /** Complex field on the plane z over x ∈ ±halfX, y ∈ ±halfY, sampled at pixel centres. */
 export function computeXY(p: FarFieldInput, z: number, halfX: number, halfY: number, nx: number, ny: number): FieldWindow {
-  const s = deviceSpectrum(p);
+  const dx = (2 * halfX) / nx;
+  const dy = (2 * halfY) / ny;
+  const x0 = -halfX + dx / 2;
+  const y0 = -halfY + dy / 2;
+  const planes = solveChannels(p, (mix) => xyPlane(deviceSpectrum(p, mix), p, z, nx, ny, x0, dx, y0, dy));
+  return packField(planes, nx, ny, x0, dx, y0, dy);
+}
+
+function xyPlane(s: Spectrum, p: FarFieldInput, z: number, nx: number, ny: number,
+  x0: number, dx: number, y0: number, dy: number): Plane {
   const { rows, cols, df } = s;
   const gridRe = new Float64Array(rows * cols);
   const gridIm = new Float64Array(rows * cols);
@@ -355,10 +400,6 @@ export function computeXY(p: FarFieldInput, z: number, halfX: number, halfY: num
     gridRe[at] = s.re[i] * c - s.im[i] * d;
     gridIm[at] = s.re[i] * d + s.im[i] * c;
   }
-  const dx = (2 * halfX) / nx;
-  const dy = (2 * halfY) / ny;
-  const x0 = -halfX + dx / 2;
-  const y0 = -halfY + dy / 2;
   const rowsX = cztFor(cols, nx, s.fx0, df, x0, dx);
   const colsY = cztFor(rows, ny, s.fy0, df, y0, dy);
   const outRe = new Float64Array(ny * nx);
@@ -376,7 +417,7 @@ export function computeXY(p: FarFieldInput, z: number, halfX: number, halfY: num
     for (let r = 0; r < rows; r++) rowsX.run(gridRe, gridIm, r * cols, 1, midRe, midIm, r * nx, 1);
     for (let c = 0; c < nx; c++) colsY.run(midRe, midIm, c, nx, outRe, outIm, c, nx);
   }
-  return packField(outRe, outIm, nx, ny, x0, dx, y0, dy);
+  return { re: outRe, im: outIm };
 }
 
 /**
@@ -399,7 +440,14 @@ function startPhasor(s: Spectrum, i: number, k: number, dz: number, out: Float64
 const phasors = new Float64Array(16);
 
 export function computeXZ(p: FarFieldInput, halfX: number, zMax: number, nx: number, nz: number): FieldWindow {
-  const s = deviceSpectrum(p);
+  const dx = (2 * halfX) / nx;
+  const x0 = -halfX + dx / 2;
+  const dz = zMax / nz;
+  const planes = solveChannels(p, (mix) => xzPlane(deviceSpectrum(p, mix), p, nx, nz, x0, dx, dz));
+  return packField(planes, nx, nz, x0, dx, dz / 2, dz);
+}
+
+function xzPlane(s: Spectrum, p: FarFieldInput, nx: number, nz: number, x0: number, dx: number, dz: number): Plane {
   const { cols, df } = s;
   const k = TAU / p.wavelength;
   // Group the used (even-iy) bins by column with a stable counting sort. Each plane cell still
@@ -421,7 +469,6 @@ export function computeXZ(p: FarFieldInput, halfX: number, zMax: number, nx: num
 
   const planeRe = new Float64Array(cols * nz); // [col * nz + z]
   const planeIm = new Float64Array(cols * nz);
-  const dz = zMax / nz;
   for (let col = 0; col < cols; col++) {
     const base = col * nz;
     let m = columnStart[col];
@@ -462,25 +509,30 @@ export function computeXZ(p: FarFieldInput, halfX: number, zMax: number, nx: num
       }
     }
   }
-  const dx = (2 * halfX) / nx;
-  const x0 = -halfX + dx / 2;
   const toX = cztFor(cols, nx, s.fx0, df, x0, dx);
   const outRe = new Float64Array(nz * nx);
   const outIm = new Float64Array(nz * nx);
   for (let z = 0; z < nz; z++) toX.run(planeRe, planeIm, z, nz, outRe, outIm, z * nx, 1);
-  return packField(outRe, outIm, nx, nz, x0, dx, dz / 2, dz);
+  return { re: outRe, im: outIm };
 }
 
-function packField(re: Float64Array, im: Float64Array, nx: number, ny: number,
+function packField(planes: Plane[], nx: number, ny: number,
   x0: number, dx: number, v0: number, dv: number): FieldWindow {
+  const [a, b] = planes;
   const data = new Float32Array(2 * nx * ny);
+  const dataB = b ? new Float32Array(2 * nx * ny) : undefined;
   let peak = 0;
   let at = 0;
-  for (let i = 0; i < re.length; i++) {
-    data[2 * i] = re[i];
-    data[2 * i + 1] = im[i];
-    const v = re[i] * re[i] + im[i] * im[i];
+  for (let i = 0; i < a.re.length; i++) {
+    data[2 * i] = a.re[i];
+    data[2 * i + 1] = a.im[i];
+    let v = a.re[i] * a.re[i] + a.im[i] * a.im[i];
+    if (b) {
+      dataB![2 * i] = b.re[i];
+      dataB![2 * i + 1] = b.im[i];
+      v += b.re[i] * b.re[i] + b.im[i] * b.im[i];
+    }
     if (v > peak) { peak = v; at = i; }
   }
-  return { data, nx, ny, peak, peakX: x0 + (at % nx) * dx, peakV: v0 + Math.floor(at / nx) * dv };
+  return { data, dataB, nx, ny, peak, peakX: x0 + (at % nx) * dx, peakV: v0 + Math.floor(at / nx) * dv };
 }

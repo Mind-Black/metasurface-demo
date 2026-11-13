@@ -110,12 +110,16 @@ export class FarFieldRenderer {
       vortex: Boolean(ag.vortex),
       hologram: Boolean(ag.hologram),
       cghPhaseMask: s.cghPhaseMask,
+      mechanism: s.phaseMechanism,
+      stokes: s.stokes,
+      analyzer: s.analyzer,
     };
     const key = JSON.stringify([
       this.sinMax,
       input.wavelength, input.designWavelength, input.focalLength, input.diameter,
       input.deflectionAngle, input.topologicalCharge, input.lens, input.deflect,
       input.vortex, input.hologram, input.hologram ? s.hologramTarget : '',
+      input.mechanism, input.stokes, input.analyzer,
     ]);
     if (key !== this.lastKey || (input.hologram && input.cghPhaseMask !== this.lastMask)) {
       this.lastKey = key;

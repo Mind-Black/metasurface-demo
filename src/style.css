@@ -2365,3 +2365,69 @@ strong {
 @media (max-width: 640px) {
   .demo-all-controls { grid-template-columns: 1fr; gap: 0.45rem; }
 }
+
+/* Phase mechanism & polarization */
+.polarization-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) auto minmax(0, 1fr);
+  gap: 0.75rem 1rem;
+  align-items: start;
+}
+
+.polarization-sliders {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 0.85rem;
+  margin-top: 0.45rem;
+}
+
+.polarization-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.polarization-glyph {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.polarization-glyph .pol-axis {
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+}
+
+.polarization-glyph .pol-trace,
+.polarization-glyph .pol-arrow {
+  fill: none;
+  stroke: var(--accent-cyan);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.analyzer-control {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+  .polarization-grid {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .polarization-grid > .demo-control-group:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 420px) {
+  .polarization-grid,
+  .polarization-sliders {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
