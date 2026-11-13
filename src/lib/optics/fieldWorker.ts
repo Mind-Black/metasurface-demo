@@ -23,6 +23,9 @@ function validate(request: FieldRequest): string | null {
   if (![halfX, nx, z ?? 0].every(Number.isFinite) || !(nx > 0)) return 'non-finite or empty window';
   if (request.kind !== 'far' && (!Number.isFinite(halfV) || !(nv > 0))) return 'non-finite or empty window';
   if (!DEVICE_NUMBERS.every((key) => Number.isFinite(device[key]))) return 'non-finite device';
+  if (device.stokes && (!device.stokes.every(Number.isFinite) || Math.hypot(device.stokes[1], device.stokes[2], device.stokes[3]) === 0)) {
+    return 'invalid polarization';
+  }
   return null;
 }
 
@@ -40,5 +43,5 @@ worker.onmessage = (event: MessageEvent<FieldRequest>) => {
   }
   const field = solve(event.data);
   const reply: FieldReply = { request: event.data, field };
-  worker.postMessage(reply, [field.data.buffer]);
+  worker.postMessage(reply, field.dataB ? [field.data.buffer, field.dataB.buffer] : [field.data.buffer]);
 };

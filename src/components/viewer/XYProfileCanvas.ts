@@ -24,12 +24,13 @@ void main() {
   float x = (vUv.x - 0.5) * 2.0 * halfSpan * (aspect >= 1.0 ? aspect : 1.0);
   float y = (vUv.y - 0.5) * 2.0 * halfSpan * (aspect < 1.0 ? (1.0 / aspect) : 1.0);
 
-  vec2 envelope = sampleField(vec2(x, y) / (2.0 * uFieldWindow) + 0.5);
+  vec4 fieldSample = sampleField(vec2(x, y) / (2.0 * uFieldWindow) + 0.5);
+  vec2 envelope = fieldSample.rg;
   float phase = -4.0 * PI * uTime;
   vec2 rotor = vec2(cos(phase), sin(phase));
   vec2 field = vec2(envelope.x * rotor.x - envelope.y * rotor.y, envelope.x * rotor.y + envelope.y * rotor.x);
 
-  vec3 baseColor = fieldColor(field, uRenderMode, uLogIntensity, uIntensityMax);
+  vec3 baseColor = fieldColor(field, dot(fieldSample, fieldSample), uRenderMode, uLogIntensity, uIntensityMax);
 
   if (uShowGrid == 1) {
     float lineWidth = 0.15 / max(0.5, uXyZoom);

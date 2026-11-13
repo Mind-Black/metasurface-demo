@@ -5,6 +5,37 @@ import { XYProfileRenderer } from './XYProfileCanvas';
 import { FarFieldRenderer } from './FarFieldCanvas';
 import { getDemonstrationIntensityScale, formatIntensityValue, IntensityScaleRange, calculateDeflectionAngle, calculateChromaticFocalShift } from '@/lib/optics/phaseProfiles';
 import { deviceFromState, fieldClient } from '@/lib/optics/fieldClient';
+import { pbResponse } from '@/lib/optics/finLut';
+import { Analyzer, cabs2, ellipseFromStokes, jonesFromStokes, PhaseMechanism, Stokes, stokesFromEllipse } from '@/lib/optics/polarization';
+
+/** Input polarization presets as (ψ, χ) in degrees. */
+const POLARIZATION_PRESETS: Record<string, [number, number]> = {
+  rcp: [0, 45], lcp: [0, -45], h: [0, 0], v: [90, 0], d: [45, 0], a: [-45, 0],
+};
+
+/** SVG path of the field tip Re[(Ex, Ey)·e^{−iωt}] over one period (y up), and an arrow along the motion. */
+export function polarizationEllipsePath(stokes: Stokes, radius = 26): { trace: string; arrow: string } {
+  const { ex, ey } = jonesFromStokes(stokes);
+  const at = (t: number): [number, number] => [
+    radius * (ex.re * Math.cos(t) + ex.im * Math.sin(t)),
+    -radius * (ey.re * Math.cos(t) + ey.im * Math.sin(t)),
+  ];
+  const points: string[] = [];
+  for (let i = 0; i <= 64; i++) {
+    const [x, y] = at((i / 64) * 2 * Math.PI);
+    points.push(`${i ? 'L' : 'M'}${x.toFixed(2)},${y.toFixed(2)}`);
+  }
+  const [x0, y0] = at(Math.PI / 2 - 0.25);
+  const [x1, y1] = at(Math.PI / 2);
+  const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+  const ux = (x1 - x0) / len;
+  const uy = (y1 - y0) / len;
+  const head = 6;
+  const arrow = `M${(x1 - head * ux - head * 0.6 * uy).toFixed(2)},${(y1 - head * uy + head * 0.6 * ux).toFixed(2)}`
+    + `L${x1.toFixed(2)},${y1.toFixed(2)}`
+    + `L${(x1 - head * ux + head * 0.6 * uy).toFixed(2)},${(y1 - head * uy - head * 0.6 * ux).toFixed(2)}`;
+  return { trace: `${points.join('')}Z`, arrow };
+}
 
 export class DualViewport {
   private container: HTMLElement;
@@ -27,7 +58,8 @@ export class DualViewport {
   }
 
   public static getTemplate(): string {
-    return `
+    // Raw, so the LaTeX in the math labels keeps its backslashes (\lambda, \Phi, \text{...}).
+    return String.raw`
       <div class="dual-viewport-root">
         <!-- Sticky Header Controls Bar -->
         <header class="viewport-toolbar">
@@ -304,6 +336,71 @@ export class DualViewport {
               <button type="button" class="gradient-preset-chip" data-preset="focused-vortex">Focused Vortex (Lens + OAM)</button>
               <button type="button" class="gradient-preset-chip" data-preset="steered-vortex">Steered Vortex (Deflect + OAM)</button>
               <button type="button" class="gradient-preset-chip" data-preset="offaxis-vortex">Off-Axis Vortex (Lens + Deflect + OAM)</button>
+            </div>
+          </div>
+
+          <!-- Phase mechanism and polarization -->
+          <div class="multi-gradient-section polarization-section" id="polarization-section">
+            <div class="multi-gradient-header">
+              <div class="multi-gradient-title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <ellipse cx="12" cy="12" rx="9" ry="5" transform="rotate(-30 12 12)"/>
+                </svg>
+                Phase Mechanism &amp; Polarization
+              </div>
+              <div class="segmented-control" role="group" aria-label="Phase mechanism">
+                <button type="button" class="seg-btn active" data-mechanism="dynamic" aria-pressed="true" title="Circular pillars: the phase delay depends on diameter">Dynamic phase</button>
+                <button type="button" class="seg-btn" data-mechanism="pb" aria-pressed="false" title="Identical rotated nanofins: Pancharatnam–Berry (geometric) phase">PB phase</button>
+              </div>
+            </div>
+            <div class="demo-helper-note" id="pol-mechanism-note"></div>
+            <div class="polarization-grid">
+              <div class="demo-control-group">
+                <div class="demo-control-label-row">
+                  <span class="demo-label">Input polarization:</span>
+                  <span id="pol-stokes" class="demo-val" title="Normalized Stokes parameters (S₁, S₂, S₃); S₃ &gt; 0 is RCP"></span>
+                </div>
+                <div class="demo-presets-row" role="group" aria-label="Input polarization presets">
+                  <button type="button" class="demo-chip" data-pol="rcp" title="Right circular (IEEE: clockwise viewed from the source, S₃ = +1)">RCP</button>
+                  <button type="button" class="demo-chip" data-pol="lcp" title="Left circular (S₃ = −1)">LCP</button>
+                  <button type="button" class="demo-chip" data-pol="h">H</button>
+                  <button type="button" class="demo-chip" data-pol="v">V</button>
+                  <button type="button" class="demo-chip" data-pol="d">+45°</button>
+                  <button type="button" class="demo-chip" data-pol="a">−45°</button>
+                </div>
+                <div class="polarization-sliders">
+                  <div class="polarization-slider">
+                    <label for="pol-slider-psi" class="demo-label">Orientation <span class="math-tex">\psi</span> <span id="pol-label-psi" class="demo-val">0°</span></label>
+                    <input type="range" id="pol-slider-psi" class="demo-slider-input" min="-90" max="90" step="1" value="0" aria-label="Polarization orientation">
+                  </div>
+                  <div class="polarization-slider">
+                    <label for="pol-slider-chi" class="demo-label">Ellipticity <span class="math-tex">\chi</span> <span id="pol-label-chi" class="demo-val">45°</span></label>
+                    <input type="range" id="pol-slider-chi" class="demo-slider-input" min="-45" max="45" step="1" value="45" aria-label="Polarization ellipticity">
+                  </div>
+                </div>
+              </div>
+              <figure class="polarization-glyph" title="Field tip over one period, looking back at the source (beam towards you), x right, y up">
+                <svg viewBox="-34 -34 68 68" width="76" height="76" aria-hidden="true">
+                  <line x1="-32" y1="0" x2="32" y2="0" class="pol-axis"/>
+                  <line x1="0" y1="-32" x2="0" y2="32" class="pol-axis"/>
+                  <path id="pol-ellipse" class="pol-trace" d=""/>
+                  <path id="pol-arrow" class="pol-arrow" d=""/>
+                </svg>
+                <figcaption id="pol-handedness">RCP</figcaption>
+              </figure>
+              <div class="demo-control-group">
+                <div class="demo-control-label-row">
+                  <span class="demo-label">Output analyzer (all field views):</span>
+                </div>
+                <div class="segmented-control analyzer-control" role="group" aria-label="Output analyzer">
+                  <button type="button" class="seg-btn active" data-analyzer="none" aria-pressed="true" title="No analyzer: Intensity is the total |E|²; Wave and Phase show Eₓ">None</button>
+                  <button type="button" class="seg-btn" data-analyzer="rcp" aria-pressed="false" title="Transmit only the RCP component">RCP</button>
+                  <button type="button" class="seg-btn" data-analyzer="lcp" aria-pressed="false" title="Transmit only the LCP component">LCP</button>
+                  <button type="button" class="seg-btn" data-analyzer="x" aria-pressed="false" title="Linear polarizer along x">X</button>
+                  <button type="button" class="seg-btn" data-analyzer="y" aria-pressed="false" title="Linear polarizer along y">Y</button>
+                </div>
+                <div class="demo-helper-note" id="pol-fin-readout"></div>
+              </div>
             </div>
           </div>
 
@@ -736,6 +833,31 @@ export class DualViewport {
       this.latticeViewer?.resetCamera();
     });
 
+    // --- Phase mechanism & polarization ---
+    const mechanismBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-mechanism]');
+    mechanismBtns.forEach((btn) => btn.addEventListener('click', () => {
+      opticsStore.getState().setPhaseMechanism(btn.dataset.mechanism as PhaseMechanism);
+    }));
+    const analyzerBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-analyzer]');
+    analyzerBtns.forEach((btn) => btn.addEventListener('click', () => {
+      opticsStore.getState().setAnalyzer(btn.dataset.analyzer as Analyzer);
+    }));
+    const polChips = this.container.querySelectorAll<HTMLButtonElement>('[data-pol]');
+    const psiSlider = this.container.querySelector<HTMLInputElement>('#pol-slider-psi');
+    const chiSlider = this.container.querySelector<HTMLInputElement>('#pol-slider-chi');
+    const setEllipse = (psiDeg: number, chiDeg: number) => {
+      if (psiSlider) psiSlider.value = String(psiDeg);
+      if (chiSlider) chiSlider.value = String(chiDeg);
+      opticsStore.getState().setStokes(stokesFromEllipse((psiDeg * Math.PI) / 180, (chiDeg * Math.PI) / 180));
+    };
+    polChips.forEach((chip) => chip.addEventListener('click', () => {
+      const preset = POLARIZATION_PRESETS[chip.dataset.pol ?? ''];
+      if (preset) setEllipse(preset[0], preset[1]);
+    }));
+    const onEllipseInput = () => setEllipse(Number(psiSlider?.value ?? 0), Number(chiSlider?.value ?? 0));
+    psiSlider?.addEventListener('input', onEllipseInput);
+    chiSlider?.addEventListener('input', onEllipseInput);
+
     // --- Multi-Gradient Superposition Listeners ---
     const gradientBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-gradient]');
     gradientBtns.forEach((btn) => {
@@ -1044,6 +1166,70 @@ export class DualViewport {
       }
     });
 
+    // Phase mechanism & polarization readouts. Run once now: the store only notifies on changes.
+    const syncPolarization = (state: OpticsState): void => {
+      const pb = state.phaseMechanism === 'pb';
+      mechanismBtns.forEach((btn) => {
+        const active = btn.dataset.mechanism === state.phaseMechanism;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+      });
+      analyzerBtns.forEach((btn) => {
+        const active = btn.dataset.analyzer === state.analyzer;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+      });
+      const [, s1, s2, s3] = state.stokes;
+      const polNorm = Math.hypot(s1, s2, s3) || 1;
+      const { psi, chi } = ellipseFromStokes(state.stokes);
+      const psiDeg = Math.round((psi * 180) / Math.PI);
+      const chiDeg = Math.round((chi * 180) / Math.PI);
+      const circular = Math.abs(chiDeg) >= 45;
+      // ψ is undefined for circular light; keep that slider where the user left it.
+      if (psiSlider && document.activeElement !== psiSlider && !circular) psiSlider.value = String(psiDeg);
+      if (chiSlider && document.activeElement !== chiSlider) chiSlider.value = String(chiDeg);
+      const labelPsi = this.container.querySelector('#pol-label-psi');
+      if (labelPsi) labelPsi.textContent = circular ? '—' : `${psiDeg}°`;
+      const labelChi = this.container.querySelector('#pol-label-chi');
+      if (labelChi) labelChi.textContent = `${chiDeg}°`;
+      polChips.forEach((chip) => {
+        const preset = POLARIZATION_PRESETS[chip.dataset.pol ?? ''];
+        if (!preset) return;
+        const target = stokesFromEllipse((preset[0] * Math.PI) / 180, (preset[1] * Math.PI) / 180);
+        const match = Math.hypot(target[1] - s1 / polNorm, target[2] - s2 / polNorm, target[3] - s3 / polNorm) < 0.02;
+        chip.classList.toggle('active', match);
+      });
+      const stokesLabel = this.container.querySelector('#pol-stokes');
+      const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v / polNorm).toFixed(2)}`;
+      if (stokesLabel) stokesLabel.textContent = `S = (${signed(s1)}, ${signed(s2)}, ${signed(s3)})`;
+      const glyph = polarizationEllipsePath(state.stokes);
+      this.container.querySelector('#pol-ellipse')?.setAttribute('d', glyph.trace);
+      // Linear light has no sense of rotation, so no arrowhead.
+      this.container.querySelector('#pol-arrow')?.setAttribute('d', chiDeg === 0 ? '' : glyph.arrow);
+      const handedness = this.container.querySelector('#pol-handedness');
+      if (handedness) {
+        handedness.textContent = circular ? (chiDeg > 0 ? 'RCP' : 'LCP')
+          : chiDeg === 0 ? `Linear ${psiDeg}°` : `${chiDeg > 0 ? 'Right' : 'Left'} elliptical`;
+      }
+      const mechanismNote = this.container.querySelector('#pol-mechanism-note');
+      if (mechanismNote) {
+        mechanismNote.textContent = pb
+          ? 'Identical TiO₂ nanofins, each rotated by θ = φ/2. RCP in → LCP out carries +φ (the designed device); LCP in → RCP out carries −φ (a diverging lens, mirrored deflection, ℓ → −ℓ, the twin hologram). The unconverted part keeps its polarization and gets no phase profile.'
+          : 'Circular TiO₂ pillars are isotropic: the phase delay depends on diameter only, and the transmitted polarization equals the input.';
+      }
+      const finReadout = this.container.querySelector('#pol-fin-readout');
+      if (finReadout) {
+        if (pb) {
+          const fin = pbResponse(state.designWavelength, state.wavelength);
+          finReadout.textContent = `Fin ${fin.lengthNm} × ${fin.widthNm} × ${state.heightNm} nm, chosen at λ₀ = ${(state.designWavelength * 1000).toFixed(0)} nm. `
+            + `At ${(state.wavelength * 1000).toFixed(0)} nm, ${(cabs2(fin.d) * 100).toFixed(0)}% of the incident power is helicity-converted and ${(cabs2(fin.c) * 100).toFixed(0)}% passes unconverted.`;
+        } else {
+          finReadout.textContent = 'With dynamic phase the analyzer only scales the field; it never changes its shape.';
+        }
+      }
+    };
+    syncPolarization(opticsStore.getState());
+
     // Sync button active classes if store changed externally
     const syncFromStore = (state: OpticsState): void => {
       nearScaleControls.forEach((control) => control.classList.toggle('hidden', state.renderMode !== 'intensity'));
@@ -1127,6 +1313,8 @@ export class DualViewport {
           ? `Superposition: ${activeNames.join(' + ')}`
           : (modeLabels[state.deviceType] || 'Demonstration Parameters');
       }
+
+      syncPolarization(state);
 
       // Sync Transverse XY Profile controls
       const operationalFocal = calculateChromaticFocalShift(state.designWavelength, state.wavelength, state.focalLength).operationalFocalLength;
@@ -1269,7 +1457,7 @@ export class DualViewport {
 
 
       // Check if demonstration or optical parameters changed
-      const demonstrationKey = `${state.deviceType}_${ag.lens}_${ag.deflect}_${ag.vortex}_${ag.hologram}_${state.wavelength}_${state.designWavelength}_${state.focalLength}_${state.diameter}_${state.deflectionAngle}_${state.topologicalCharge}_${state.hologramTarget}_${state.hologramIterations}_${Boolean(state.cghPhaseMask)}`;
+      const demonstrationKey = `${state.deviceType}_${ag.lens}_${ag.deflect}_${ag.vortex}_${ag.hologram}_${state.wavelength}_${state.designWavelength}_${state.focalLength}_${state.diameter}_${state.deflectionAngle}_${state.topologicalCharge}_${state.hologramTarget}_${state.hologramIterations}_${Boolean(state.cghPhaseMask)}_${state.phaseMechanism}_${state.stokes.join(',')}_${state.analyzer}`;
       if (demonstrationKey !== lastDemonstrationKey) {
         lastDemonstrationKey = demonstrationKey;
         const deviceChanged = lastDeviceType !== state.deviceType;

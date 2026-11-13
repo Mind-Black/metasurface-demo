@@ -26,6 +26,15 @@ def pillar_grid(p, d, eps_p, M=512, ss=4):
     return 1 + (eps_p - 1)*f
 
 
+def rect_grid(p, L, W, eps_p, M=512, ss=4):
+    """Area-averaged permittivity of a centred rectangular fin, length L along x and width W along y."""
+    c = (np.arange(M*ss) + .5)/(M*ss) - .5
+    x = c*p
+    X, Y = np.meshgrid(x, x, indexing='ij')
+    f = ((abs(X) <= L/2) & (abs(Y) <= W/2)).astype(float).reshape(M, ss, M, ss).mean(axis=(1, 3))
+    return 1 + (eps_p - 1)*f
+
+
 def forward(z):
     """Pick the square root that decays or propagates towards +z."""
     z = np.where(z.imag < 0, -z, z)
@@ -59,10 +68,11 @@ def solve(p, lam, h, eps_grid, eps_sub, N=7):
     X = np.exp(1j*gam*k0*h)
     n4 = 2*n2
     A = np.zeros((4*n4, 4*n4), complex)
-    b = np.zeros(4*n4, complex)
-    inc = np.zeros(n4, complex)
+    b = np.zeros((4*n4, 2), complex)
+    inc = np.zeros((n4, 2), complex)
     c0 = n2//2
-    inc[c0] = 1  # x-polarized; a circular pillar on a square lattice is C4 symmetric
+    inc[c0, 0] = 1       # x-polarized
+    inc[n2 + c0, 1] = 1  # y-polarized
     A[0:n4, 0:n4] = -W1
     A[0:n4, n4:2*n4] = W
     A[0:n4, 2*n4:3*n4] = W*X
@@ -78,7 +88,8 @@ def solve(p, lam, h, eps_grid, eps_sub, N=7):
     A[3*n4:, 2*n4:3*n4] = -V
     A[3*n4:, 3*n4:] = -V2
     sol = np.linalg.solve(A, b)
-    r, t = sol[:n4], sol[3*n4:]
+    r, t = sol[:n4, 0], sol[3*n4:, 0]
+    ty = sol[3*n4:, 1]
 
     def order_power(a, kz):
         ax, ay = a[:n2], a[n2:]
@@ -88,7 +99,9 @@ def solve(p, lam, h, eps_grid, eps_sub, N=7):
     kzi = kz1[c0].real
     Rord = order_power(r, kz1)/kzi
     Tord = order_power(t, kz2)/kzi
-    return dict(t00=t[c0], T00=Tord[c0], T=Tord.sum(), R=Rord.sum(), kzi=kzi)
+    # Power figures are for x-polarized incidence. Jones entries: t_ab = a-component for b-incidence.
+    return dict(t00=t[c0], txx=t[c0], tyx=t[n2 + c0], txy=ty[c0], tyy=ty[n2 + c0],
+                T00=Tord[c0], T=Tord.sum(), R=Rord.sum(), kzi=kzi)
 
 
 def slab(n_sub, n, h, lam):

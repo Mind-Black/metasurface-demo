@@ -34,12 +34,13 @@ void main() {
   float z = vUv.y * zMax;
 
   // The texture stores the envelope E·exp(-ikz); restore the carrier and time dependence here.
-  vec2 envelope = sampleField(vec2(x / (2.0 * uFieldWindow.x) + 0.5, z / uFieldWindow.y));
+  vec4 fieldSample = sampleField(vec2(x / (2.0 * uFieldWindow.x) + 0.5, z / uFieldWindow.y));
+  vec2 envelope = fieldSample.rg;
   float phase = 2.0 * PI / uWavelength * z - 4.0 * PI * uTime;
   vec2 rotor = vec2(cos(phase), sin(phase));
   vec2 field = vec2(envelope.x * rotor.x - envelope.y * rotor.y, envelope.x * rotor.y + envelope.y * rotor.x);
 
-  vec3 baseColor = fieldColor(field, uRenderMode, uLogIntensity, uIntensityMax);
+  vec3 baseColor = fieldColor(field, dot(fieldSample, fieldSample), uRenderMode, uLogIntensity, uIntensityMax);
   float radius = uDiameter * 0.5;
 
   // Each ray leaves with the local grating direction sinθ = (λ/λ0)(sinθ_deflect - r/√(r²+f²));
