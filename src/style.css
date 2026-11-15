@@ -2476,12 +2476,18 @@ strong {
 .profile-number > span { display: flex; align-items: center; gap: 0.2rem; }
 .profile-number input, .profile-number select { width: 100%; }
 .profile-number small { color: #7d899d; font-size: 0.62rem; }
-.profile-empty-hint { margin: 0.5rem 0 0; color: #8490a2; font-size: 0.66rem; }
+.metasurface-help { color: var(--text-dim); font-size: 0.72rem; line-height: 1.45; }
+.metasurface-help summary { width: fit-content; color: #9fb1c8; cursor: pointer; }
+.metasurface-help summary:hover, .metasurface-help summary:focus-visible { color: var(--accent-cyan); }
+.metasurface-help p { margin: 0.35rem 0 0; }
+.model-disclosure { margin-top: 0.1rem; }
+.metrics-disclosure { padding: 0.35rem 0.55rem; border-radius: 0.45rem; background: rgba(2, 6, 14, 0.42); }
 .metasurface-geometry-note { padding: 0.55rem 0.7rem; border-left: 2px solid #a78bfa; background: rgba(99, 102, 241, 0.06); color: #aebbd0; font-size: 0.72rem; line-height: 1.5; }
 .metasurface-geometry-note a { color: #7dd3fc; }
 .metasurface-metrics:empty { display: none; }
 .metasurface-metrics { padding: 0.6rem 0.7rem; border-radius: 0.45rem; background: rgba(2, 6, 14, 0.55); color: #cbd5e1; font-size: 0.75rem; line-height: 1.5; }
 .lattice-phase-channel { display: flex; gap: 0.2rem; }
+.lattice-phase-channel button { pointer-events: auto; }
 .lattice-phase-channel button { border: 1px solid var(--border-subtle); border-radius: 0.3rem; padding: 0.18rem 0.3rem; background: rgba(5, 9, 19, 0.88); color: var(--text-dim); font: inherit; font-size: 0.62rem; cursor: pointer; }
 .lattice-phase-channel button.active { border-color: var(--accent-cyan); color: #e0f2fe; }
 .dual-viewport-root:has(#metasurface-controls-host[data-design-kind="orthogonal"]) #btn-toggle-rays,

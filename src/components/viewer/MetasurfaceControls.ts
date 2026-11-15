@@ -17,8 +17,11 @@ function reconcile(parent: Node, next: Node): void {
       return;
     }
     if (current instanceof Element && source instanceof Element) {
-      for (const attr of Array.from(current.attributes)) if (!source.hasAttribute(attr.name)) current.removeAttribute(attr.name);
-      for (const attr of Array.from(source.attributes)) if (current.getAttribute(attr.name) !== attr.value) current.setAttribute(attr.name, attr.value);
+      // `open` is user-controlled state on native disclosures. Keep it when the
+      // surrounding controls rerender after a store update.
+      const preserveOpen = current instanceof HTMLDetailsElement;
+      for (const attr of Array.from(current.attributes)) if (!(preserveOpen && attr.name === 'open') && !source.hasAttribute(attr.name)) current.removeAttribute(attr.name);
+      for (const attr of Array.from(source.attributes)) if (!(preserveOpen && attr.name === 'open') && current.getAttribute(attr.name) !== attr.value) current.setAttribute(attr.name, attr.value);
       reconcile(current, source);
       if (current instanceof HTMLInputElement && source instanceof HTMLInputElement) {
         current.checked = source.checked;
@@ -115,6 +118,11 @@ export class MetasurfaceControls {
     const kind = design.kind;
     const profiles = design.kind === 'legacy' ? [] : design.profiles;
     const supportMessage = librarySupport(state.designWavelength, state.wavelength, state.material, state.pitchNm, state.heightNm);
+    const modelDescription = kind === 'hybrid'
+      ? 'Set a dynamic phase profile and an independent PB geometric phase profile for circular output. RCP → LCP receives D + ΦPB + π/2; LCP → RCP receives D − ΦPB + π/2. Here θ = ΦPB/2; both conversions share the same π/2 offset.'
+      : kind === 'orthogonal'
+        ? 'Set two independent phase profiles on a design input-polarization basis; the output components obey conjugate constraints.'
+        : 'Choose a two-function design architecture.';
     const opticsSignature = `${designKey(design)}|${state.responseModel}|${state.designWavelength}|${state.wavelength}|${state.diameter}|${state.material}|${state.pitchNm}|${state.heightNm}|${state.stokes.join(',')}|${state.analyzer}`;
     const geometrySignature = `${designKey(design)}|${state.designWavelength}|${state.material}|${state.pitchNm}|${state.heightNm}|${state.phaseMapChannel}|${state.responseModel}`;
     const currentMetrics = this.host.querySelector<HTMLElement>('#metasurface-metrics')?.textContent ?? '';
@@ -133,28 +141,30 @@ export class MetasurfaceControls {
     template.innerHTML = `
       <section class="metasurface-controls" aria-labelledby="metasurface-title">
         <div class="metasurface-controls-head">
-          <div><h3 id="metasurface-title">Single-layer metasurface design</h3>
-            <p>${kind === 'hybrid' ? 'Set a dynamic phase profile and an independent PB geometric phase profile for circular output.' : kind === 'orthogonal' ? 'Set two independent phase profiles on a design input-polarization basis; the output components obey conjugate constraints.' : 'Choose a two-function design architecture.'}</p></div>
+          <div><h3 id="metasurface-title">Single-layer metasurface design</h3></div>
           <div class="segmented-control design-kind-control" role="group" aria-label="Metasurface design architecture">
             ${[['legacy','Legacy'],['orthogonal','Orthogonal channels'],['hybrid','Dynamic + PB']].map(([value, label]) => `<button class="seg-btn ${kind === value ? 'active' : ''}" type="button" data-design-kind="${value}" aria-pressed="${kind === value}">${label}</button>`).join('')}
           </div>
         </div>
         <div class="metasurface-design-body ${kind === 'legacy' ? 'hidden' : ''}">
           <div class="metasurface-top-grid">
-            ${kind === 'orthogonal' ? this.basisMarkup(design as Extract<DeviceDesign, {kind:'orthogonal'}>) : '<div class="design-note hybrid-note"><strong>Hybrid circular output</strong><span>RCP → LCP receives D + Φ<sub>PB</sub> + π/2; LCP → RCP receives D − Φ<sub>PB</sub> + π/2. Here θ = Φ<sub>PB</sub>/2; both conversions share the same π/2 offset.</span></div>'}
+            ${kind === 'orthogonal' ? this.basisMarkup(design as Extract<DeviceDesign, {kind:'orthogonal'}>) : '<div class="design-note hybrid-note"><strong title="RCP → LCP: D + ΦPB + π/2; LCP → RCP: D − ΦPB + π/2; θ = ΦPB/2">Hybrid circular output</strong></div>'}
             <div class="response-choice">
               <span class="demo-label">Response model</span>
               <div class="segmented-control" role="group" aria-label="Metasurface response model">
-                <button class="seg-btn ${state.responseModel === 'ideal' ? 'active' : ''}" type="button" data-response="ideal" aria-pressed="${state.responseModel === 'ideal'}">Ideal target</button>
-                <button class="seg-btn ${state.responseModel === 'library' ? 'active' : ''}" type="button" data-response="library" aria-pressed="${state.responseModel === 'library'}">Library prediction</button>
+                <button class="seg-btn ${state.responseModel === 'ideal' ? 'active' : ''}" type="button" data-response="ideal" aria-pressed="${state.responseModel === 'ideal'}" title="Dispersion-free ideal local-retarder target for comparing channel phase designs.">Ideal target</button>
+                <button class="seg-btn ${state.responseModel === 'library' ? 'active' : ''}" type="button" data-response="library" aria-pressed="${state.responseModel === 'library'}" title="Local-periodic unit-cell library response. Angular-spectrum propagation is a transverse-field approximation, not a full-device simulation.">Library prediction</button>
               </div>
-              <p class="${state.responseModel === 'library' && supportMessage ? 'response-unavailable' : ''}">${state.responseModel === 'ideal' ? 'Dispersion-free ideal local-retarder target for comparing channel phase designs.' : supportMessage ? `Unavailable: ${esc(supportMessage)} The library response remains selected.` : 'Local-periodic unit-cell library response. Angular-spectrum propagation is a transverse-field approximation, not a full-device simulation.'}</p>
+              <p class="${supportMessage ? 'response-unavailable' : ''}">${supportMessage ? `Library comparison unavailable: ${esc(supportMessage)}${state.responseModel === 'library' ? ' The library response remains selected.' : ''}` : ''}</p>
             </div>
           </div>
           <div class="metasurface-profile-grid">${profiles.map((profile, index) => this.profileMarkup(profile, index, kind)).join('')}</div>
-          <div id="metasurface-physics-note" class="metasurface-geometry-note" role="note">In this single-layer model, J uⱼ = exp(iφⱼ) uⱼ*: each input has an independent phase and its complex-conjugate output polarization. Linear states are preserved; elliptical and circular handedness reverses. The ideal target matrix stays fixed during wavelength scans. Propagation uses a transverse-field angular-spectrum approximation, not a full-device electromagnetic simulation. <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC9729203/" target="_blank" rel="noreferrer">Research background</a></div>
-          <div id="metasurface-geometry-note" class="metasurface-geometry-note" role="note">${esc(preservedGeometry)}</div>
-          <div id="metasurface-metrics" class="metasurface-metrics" aria-live="polite">${esc(metricText)}</div>
+          <details class="metasurface-help model-disclosure"><summary>Learn more about this model</summary>
+            <p>${esc(modelDescription)}</p>
+            <div id="metasurface-physics-note" class="metasurface-geometry-note" role="note">In this single-layer model, J uⱼ = exp(iφⱼ) uⱼ*: each input has an independent phase and its complex-conjugate output polarization. Linear states are preserved; elliptical and circular handedness reverses. The ideal target matrix stays fixed during wavelength scans. Propagation uses a transverse-field angular-spectrum approximation, not a full-device electromagnetic simulation. <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC9729203/" target="_blank" rel="noreferrer">Research background</a></div>
+            <div id="metasurface-geometry-note" class="metasurface-geometry-note" role="note">${esc(preservedGeometry)}</div>
+          </details>
+          <details class="metasurface-help metrics-disclosure"><summary>Library metrics · Learn more</summary><div id="metasurface-metrics" class="metasurface-metrics" aria-live="polite">${esc(metricText)}</div></details>
         </div>
       </section>`;
     reconcile(this.host, template.content);
@@ -172,12 +182,12 @@ export class MetasurfaceControls {
 
   private profileMarkup(profile: PhaseProfile, index: number, kind: DeviceDesign['kind']): string {
     const title = kind === 'hybrid' ? (index === 0 ? 'Dynamic phase' : 'PB phase') : `Channel ${index + 1}`;
-    const check = (key: keyof PhaseProfile, label: string) => `<label class="profile-function"><input type="checkbox" data-profile-index="${index}" data-profile-field="${key}" ${profile[key] ? 'checked' : ''}>${label}</label>`;
+    const check = (key: keyof PhaseProfile, label: string, description: string) => `<label class="profile-function" title="${description}"><input type="checkbox" data-profile-index="${index}" data-profile-field="${key}" title="${description}" ${profile[key] ? 'checked' : ''}>${label}</label>`;
     const number = (key: keyof PhaseProfile, label: string, value: number, min: number, max: number, step: number, unit: string) => `<label class="profile-number">${label}<span><input type="number" data-profile-index="${index}" data-profile-field="${key}" value="${value}" min="${min}" max="${max}" step="${step}"><small>${unit}</small></span></label>`;
     const hologram = profile.hologram ? `<div class="profile-extra"><label class="profile-number">Target<select data-profile-index="${index}" data-profile-field="hologramTarget"><option value="crest" ${profile.hologramTarget === 'crest' ? 'selected' : ''}>Crest</option><option value="smiley" ${profile.hologramTarget === 'smiley' ? 'selected' : ''}>Smiley</option><option value="mu" ${profile.hologramTarget === 'mu' ? 'selected' : ''}>μ</option></select></label>${number('hologramIterations','Iterations',profile.hologramIterations,1,500,1,'')}</div>` : '';
     return `<article class="metasurface-profile-card"><header><h4>${title}</h4><span>Profile ${index+1}</span></header>
-      <div class="profile-functions">${check('lens','Lens')}${check('deflect','Deflect')}${check('vortex','Vortex')}${check('hologram','Hologram')}</div>
+      <div class="profile-functions">${check('lens','Lens','Add a focusing phase profile.')}${check('deflect','Deflect','Add a linear phase ramp to steer the beam.')}${check('vortex','Vortex','Add an orbital angular momentum phase profile.')}${check('hologram','Hologram','Add an iterative phase-only hologram.')}</div>
       <div class="profile-parameters">${number('focalLength','Focal length',profile.focalLength,1,100,0.5,'µm')}${number('deflectionAngle','Deflection angle',deg(profile.deflectionAngle),-60,60,1,'°')}${number('topologicalCharge','Topological charge',profile.topologicalCharge,-10,10,1,'ℓ')}</div>
-      ${hologram}<p class="profile-empty-hint">All functions may be turned off for a flat phase profile.</p></article>`;
+      ${hologram}</article>`;
   }
 }

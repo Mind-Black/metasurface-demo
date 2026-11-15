@@ -77,3 +77,54 @@ test('each profile has an independent editable hologram', async ({ page }) => {
   await expect(controls.locator('[data-profile-index="1"][data-profile-field="hologramTarget"]')).toHaveValue('mu');
   await expect(page.locator('#metasurface-metrics')).toContainText('RMS Jones error', { timeout: 20000 });
 });
+
+test('Learn more disclosure stays open across profile and mode updates', async ({ page }) => {
+  await page.goto('/');
+  const controls = page.locator('#metasurface-controls-host');
+  await controls.locator('[data-design-kind="orthogonal"]').click();
+  const learnMore = controls.locator('details.model-disclosure');
+  await expect(learnMore).not.toHaveAttribute('open', '');
+  await learnMore.locator('summary').click();
+  await expect(learnMore).toHaveAttribute('open', '');
+
+  const defaultLens = controls.locator('[data-profile-index="0"][data-profile-field="lens"]');
+  await expect(defaultLens).toBeChecked();
+  const focal = controls.locator('[data-profile-index="0"][data-profile-field="focalLength"]');
+  await focal.fill('31');
+  await focal.dispatchEvent('input');
+  await expect(learnMore).toHaveAttribute('open', '');
+  await controls.locator('[data-design-kind="hybrid"]').click();
+  await expect(learnMore).toHaveAttribute('open', '');
+  await controls.locator('[data-design-kind="orthogonal"]').click();
+  await expect(learnMore).toHaveAttribute('open', '');
+  await expect(defaultLens).toBeChecked();
+});
+
+for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 'mobile', width: 390, height: 844 }]) {
+  test(`${viewport.name} phase map profile buttons switch in orthogonal and hybrid designs`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.goto('/');
+    const controls = page.locator('#metasurface-controls-host');
+    const canvas = page.locator('#lattice-phase-map');
+    const buttons = page.locator('.lattice-phase-channel button');
+
+    for (const mode of ['orthogonal', 'hybrid']) {
+      await controls.locator(`[data-design-kind="${mode}"]`).click();
+      await expect(controls).toHaveAttribute('data-design-kind', mode);
+      const firstImage = await canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL());
+      await buttons.nth(1).click();
+      await expect(buttons.nth(1)).toHaveAttribute('aria-pressed', 'true');
+      await expect(buttons.nth(0)).toHaveAttribute('aria-pressed', 'false');
+      await expect.poll(() => canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL())).not.toBe(firstImage);
+      const secondImage = await canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL());
+      await buttons.nth(0).click();
+      await expect(buttons.nth(0)).toHaveAttribute('aria-pressed', 'true');
+      await expect(buttons.nth(1)).toHaveAttribute('aria-pressed', 'false');
+      await expect.poll(() => canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL())).not.toBe(secondImage);
+    }
+
+    if (viewport.name === 'desktop') {
+      await controls.screenshot({ path: 'test-results-local/profile-controls.png' });
+    }
+  });
+}

@@ -297,9 +297,6 @@ export class DualViewport {
               </span>
               <span class="panel-mode-tag" id="demo-mode-tag">Metalens Parameters</span>
             </div>
-            <div class="panel-header-right">
-              <span class="panel-hint">Controls directly drive the 3D lattice, XZ cross-section &amp; transverse XY slice in real time</span>
-            </div>
           </div>
 
           <div id="metasurface-controls-host"></div>
@@ -315,7 +312,6 @@ export class DualViewport {
                 </svg>
                 Phase Gradient Superposition <span class="math-tex">(\Phi_{\text{total}} = \sum \Phi_i)</span>:
               </div>
-              <div class="multi-gradient-hint">Combine independent phase functions into a multi-functional metasurface</div>
             </div>
 
             <!-- Active Gradient Toggle Chips -->
@@ -362,7 +358,11 @@ export class DualViewport {
                 <button type="button" class="seg-btn" data-mechanism="pb" aria-pressed="false" title="Identical rotated nanofins: Pancharatnam–Berry (geometric) phase">PB phase</button>
               </div>
             </div>
-            <div class="demo-helper-note" id="pol-mechanism-note"></div>
+            <details id="legacy-polarization-help" class="metasurface-help">
+              <summary>Learn more about polarization</summary>
+              <div class="demo-helper-note" id="pol-mechanism-note"></div>
+              <div class="demo-helper-note" id="pol-fin-readout"></div>
+            </details>
             <div class="polarization-grid">
               <div class="demo-control-group">
                 <div class="demo-control-label-row">
@@ -410,7 +410,6 @@ export class DualViewport {
                   <button type="button" class="seg-btn" data-analyzer="channel1" aria-pressed="false" title="Analyze output channel 1">Channel 1</button>
                   <button type="button" class="seg-btn" data-analyzer="channel2" aria-pressed="false" title="Analyze output channel 2">Channel 2</button>
                 </div>
-                <div class="demo-helper-note" id="pol-fin-readout"></div>
               </div>
             </div>
           </div>
@@ -1235,6 +1234,7 @@ export class DualViewport {
         handedness.textContent = circular ? (chiDeg > 0 ? 'RCP' : 'LCP')
           : chiDeg === 0 ? `Linear ${psiDeg}°` : `${chiDeg > 0 ? 'Right' : 'Left'} elliptical`;
       }
+      this.container.querySelector('#legacy-polarization-help')?.toggleAttribute('hidden', state.design.kind !== 'legacy');
       const mechanismNote = this.container.querySelector('#pol-mechanism-note');
       if (mechanismNote) {
         mechanismNote.textContent = pb
