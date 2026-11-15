@@ -9,6 +9,7 @@ import { aperturePhase, cellField, deviceChannels, FarFieldInput } from './farFi
 import { fft } from './fft';
 import { ChannelMix, mixKey } from './polarization';
 import { phaseResponse, TABLE_PITCH_UM } from './rcwaLut';
+import { isVectorDevice, vectorDeviceKey, vectorSampler } from './vectorDevice';
 
 export { fft };
 
@@ -169,6 +170,7 @@ function scalarKey(p: FarFieldInput): string {
 
 /** Identifies everything that changes the displayed field, polarization included. */
 export function deviceKey(p: FarFieldInput): string {
+  if (isVectorDevice(p)) return vectorDeviceKey(p);
   const scalar = scalarKey(p);
   return p.stokes ? [scalar, p.mechanism ?? 'dynamic', ...p.stokes, p.analyzer ?? 'none'].join('|') : scalar;
 }
@@ -195,9 +197,12 @@ const cell = new Float64Array(2);
  * a PB output channel; without it the cells carry the dynamic pillar response t(φ).
  */
 export function deviceSpectrum(p: FarFieldInput, mix: ChannelMix | null = null): Spectrum {
+  const vector = isVectorDevice(p);
+  const sampleVector = vector ? vectorSampler(p) : null;
   const pb = mix !== null && p.mechanism === 'pb';
   // Dynamic-phase spectra do not depend on polarization, which only scales them afterwards.
-  const key = pb ? `${scalarKey(p)}#pb#${mixKey(mix)}` : scalarKey(p);
+  const key = vector ? `${vectorDeviceKey(p)}#component${mix?.apertureComponent ?? 0}`
+    : pb ? `${scalarKey(p)}#pb#${mixKey(mix)}` : scalarKey(p);
   const hit = spectrumCache.findIndex((entry) => entry.key === key);
   if (hit === 0) return spectrumCache[0];
   if (hit > 0) {
@@ -219,7 +224,8 @@ export function deviceSpectrum(p: FarFieldInput, mix: ChannelMix | null = null):
       const x = i * pitch;
       const y = j * pitch;
       if (x * x + y * y > radius * radius) continue;
-      cellField(aperturePhase(p, x, y), response, mix, pb, cell);
+      if (sampleVector) sampleVector(x, y, mix?.apertureComponent ?? 0, cell);
+      else cellField(aperturePhase(p, x, y), response, mix, pb, cell);
       re[wrapIndex(j) * N + wrapIndex(i)] = cell[0];
       im[wrapIndex(j) * N + wrapIndex(i)] = cell[1];
       rowHasData[wrapIndex(j)] = 1;
@@ -359,7 +365,7 @@ interface Plane { re: Float64Array; im: Float64Array }
 function solveChannels(p: FarFieldInput, solve: (mix: ChannelMix | null) => Plane): Plane[] {
   const mixes = deviceChannels(p);
   if (!mixes) return [solve(null)];
-  if (p.mechanism === 'pb') return mixes.map((mix) => solve(mix));
+  if (p.mechanism === 'pb' || isVectorDevice(p)) return mixes.map((mix) => solve(mix));
   const base = solve(null);
   return mixes.map(({ scale }) => {
     const re = new Float64Array(base.re.length);

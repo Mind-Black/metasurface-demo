@@ -9,8 +9,15 @@ import { pbResponse } from './finLut';
 import { sampleHologramPhase } from './gerchbergSaxton';
 import { Analyzer, ChannelMix, channelMixes, PhaseMechanism, Stokes } from './polarization';
 import { phaseResponse, TABLE_PITCH_UM } from './rcwaLut';
+import type { DeviceDesign, ResponseModel } from './metasurface';
+import { isVectorDevice, vectorChannels, vectorSampler, vectorDiagnostics, type DeviceDiagnostics } from './vectorDevice';
 
 export interface FarFieldInput {
+  design?: DeviceDesign;
+  responseModel?: ResponseModel;
+  material?: 'TiO2' | 'Si';
+  pitchNm?: number;
+  heightNm?: number;
   wavelength: number;        // operating wavelength [µm]
   designWavelength: number;  // fabrication design wavelength [µm]
   focalLength: number;       // [µm]
@@ -36,6 +43,7 @@ export interface FarFieldInput {
  * only scale one scalar field, which callers solve once.
  */
 export function deviceChannels(p: FarFieldInput): ChannelMix[] | null {
+  if (isVectorDevice(p)) return vectorChannels(p);
   if (!p.stokes) return null;
   const mechanism = p.mechanism ?? 'dynamic';
   const pb = mechanism === 'pb' ? pbResponse(p.designWavelength, p.wavelength) : null;
@@ -63,6 +71,7 @@ export function cellField(phase: number, response: { re: Float64Array; im: Float
 }
 
 export interface FarFieldResult {
+  diagnostics?: DeviceDiagnostics;
   size: number;          // output grid is size x size, covering sinθ ∈ [-sinMax, sinMax]
   sinMax: number;
   real: Float32Array;      // complex field normalized by peak amplitude
@@ -93,7 +102,9 @@ export function aperturePhase(p: FarFieldInput, x: number, y: number): number {
  */
 export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): FarFieldResult {
   const radius = p.diameter * 0.5;
-  const ideal = p.idealPitch !== undefined;
+  const vector = isVectorDevice(p);
+  const sampleVector = vector ? vectorSampler(p) : null;
+  const ideal = p.idealPitch !== undefined && !vector;
   const nAp = ideal ? Math.ceil(p.diameter / p.idealPitch!) : 2 * Math.floor(radius / TABLE_PITCH_UM) + 1;
   const step = ideal ? p.diameter / nAp : TABLE_PITCH_UM;
   const k = (2 * Math.PI) / Math.max(0.05, p.wavelength);
@@ -121,7 +132,11 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
     const eIm = new Float64Array(nAp * nAp);
     for (let i = 0; i < eRe.length; i++) {
       if (!inside[i]) continue;
-      if (ideal) {
+      if (sampleVector) {
+        sampleVector(coord[i % nAp], coord[Math.floor(i / nAp)], mix?.apertureComponent ?? 0, cell);
+        eRe[i] = cell[0];
+        eIm[i] = cell[1];
+      } else if (ideal) {
         eRe[i] = Math.cos(phases[i]);
         eIm[i] = Math.sin(phases[i]);
       } else {
@@ -210,7 +225,7 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
   let channels: { real: Float64Array; imaginary: Float64Array }[];
   if (!mixes) {
     channels = [transform(aperture(null))];
-  } else if (!pb) {
+  } else if (!pb && !vector) {
     const base = transform(aperture(null));
     channels = mixes.map(({ scale }) => {
       const real = new Float64Array(base.real.length);
@@ -245,5 +260,6 @@ export function computeFarField(p: FarFieldInput, outSize = 256, sinMax = 1.0): 
       imaginary[i] /= amplitude;
     }
   }
-  return { size: outSize, sinMax, intensity: out, real, imaginary };
+  return { size: outSize, sinMax, intensity: out, real, imaginary,
+    ...(vector ? { diagnostics: vectorDiagnostics(p) } : {}) };
 }

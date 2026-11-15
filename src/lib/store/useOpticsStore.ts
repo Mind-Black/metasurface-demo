@@ -1,5 +1,7 @@
 import { generateTargetBitmap, runGerchbergSaxton } from '@/lib/optics/gerchbergSaxton';
 import type { Analyzer, PhaseMechanism, Stokes } from '@/lib/optics/polarization';
+import { defaultHybridDesign, defaultOrthogonalDesign } from '@/lib/optics/metasurface';
+import type { DeviceDesign, PhaseProfile, ResponseModel } from '@/lib/optics/metasurface';
 export const MAX_HOLOGRAM_ITERATIONS = 500;
 export type DeviceType = 'metalens' | 'deflector' | 'vortex' | 'hologram';
 export type MaterialType = 'TiO2' | 'Si';
@@ -13,6 +15,13 @@ export interface ActiveGradients {
 }
 
 export interface OpticsState {
+  design: DeviceDesign;
+  responseModel: ResponseModel;
+  savedOrthogonalResponseModel: ResponseModel;
+  savedHybridResponseModel: ResponseModel;
+  savedOrthogonalDesign: Extract<DeviceDesign, { kind: 'orthogonal' }>;
+  savedHybridDesign: Extract<DeviceDesign, { kind: 'hybrid' }>;
+  phaseMapChannel: 0 | 1;
   // Optical Parameters
   wavelength: number;       // in micrometers (e.g. 0.532)
   designWavelength: number; // in micrometers (e.g. 0.532)
@@ -56,6 +65,11 @@ export interface OpticsState {
 
   // Actions
   setWavelength: (val: number) => void;
+  setDesignKind: (kind: 'legacy' | 'orthogonal' | 'hybrid') => void;
+  setDesignBasis: (psi: number, chi: number) => void;
+  setProfile: (index: 0 | 1, patch: Partial<PhaseProfile>) => void;
+  setResponseModel: (model: ResponseModel) => void;
+  setPhaseMapChannel: (channel: 0 | 1) => void;
   setDesignWavelength: (val: number) => void;
   setFocalLength: (val: number) => void;
   setDiameter: (val: number) => void;
@@ -91,6 +105,13 @@ class OpticsStore {
 
   constructor() {
     this.state = {
+      design: { kind: 'legacy' },
+      responseModel: 'ideal',
+      savedOrthogonalResponseModel: 'ideal',
+      savedHybridResponseModel: 'ideal',
+      savedOrthogonalDesign: defaultOrthogonalDesign(),
+      savedHybridDesign: defaultHybridDesign(),
+      phaseMapChannel: 0,
       wavelength: 0.532,
       designWavelength: 0.532,
       focalLength: 25.0,
@@ -123,6 +144,50 @@ class OpticsStore {
       cghPhaseMask: null,
 
       setWavelength: (wavelength) => this.update({ wavelength }),
+      setDesignKind: (kind) => {
+        if (kind === 'legacy') this.update({ design: { kind } });
+        else if (kind === 'orthogonal') this.update({ design: this.state.savedOrthogonalDesign, responseModel: this.state.savedOrthogonalResponseModel });
+        else this.update({ design: this.state.savedHybridDesign, responseModel: this.state.savedHybridResponseModel });
+      },
+      setDesignBasis: (psi, chi) => {
+        if (!Number.isFinite(psi) || !Number.isFinite(chi)) return;
+        const saved = this.state.savedOrthogonalDesign;
+        const design = { ...saved, basis: { psi: Math.max(-Math.PI / 2, Math.min(Math.PI / 2, psi)),
+          chi: Math.max(-Math.PI / 4, Math.min(Math.PI / 4, chi)) } };
+        this.update({ savedOrthogonalDesign: design, ...(this.state.design.kind === 'orthogonal' ? { design } : {}) });
+      },
+      setProfile: (index, patch) => {
+        const kind = this.state.design.kind;
+        if (kind === 'legacy') return;
+        const base = kind === 'orthogonal' ? this.state.savedOrthogonalDesign : this.state.savedHybridDesign;
+        const profiles = base.profiles.map((profile, i) => {
+          if (i !== index) return profile;
+          const updated = { ...profile, ...patch };
+          if (![updated.focalLength, updated.deflectionAngle, updated.topologicalCharge, updated.hologramIterations].every(Number.isFinite)
+            || updated.focalLength <= 0) throw new RangeError('Profile parameters must be finite and focal length positive.');
+          updated.topologicalCharge = Math.max(-10, Math.min(10, Math.round(updated.topologicalCharge)));
+          updated.hologramIterations = Math.max(1, Math.min(MAX_HOLOGRAM_ITERATIONS, Math.round(updated.hologramIterations)));
+          if (patch.cghPhaseMask) {
+            const mask = patch.cghPhaseMask;
+            if (!mask.length || !mask[0].length || mask.some(row => row.length !== mask[0].length || row.some(v => !Number.isFinite(v)))) {
+              throw new RangeError('A hologram mask must be a nonempty rectangular array of finite phases.');
+            }
+            updated.cghPhaseMask = mask.map(row => row.map(v => ((v % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)));
+          }
+          if (updated.hologram && (!updated.cghPhaseMask || patch.hologramTarget !== undefined || patch.hologramIterations !== undefined)) {
+            updated.cghPhaseMask = runGerchbergSaxton(generateTargetBitmap(updated.hologramTarget), updated.hologramIterations).phaseMask;
+          } else if (!updated.hologram && (patch.hologramTarget !== undefined || patch.hologramIterations !== undefined)) updated.cghPhaseMask = null;
+          return updated;
+        }) as [PhaseProfile, PhaseProfile];
+        const next = { ...base, profiles } as typeof base;
+        this.update(kind === 'orthogonal'
+          ? { savedOrthogonalDesign: next as Extract<DeviceDesign, { kind: 'orthogonal' }>, design: next as DeviceDesign }
+          : { savedHybridDesign: next as Extract<DeviceDesign, { kind: 'hybrid' }>, design: next as DeviceDesign });
+      },
+      setResponseModel: (responseModel) => this.update({ responseModel,
+        ...(this.state.design.kind === 'orthogonal' ? { savedOrthogonalResponseModel: responseModel }
+          : this.state.design.kind === 'hybrid' ? { savedHybridResponseModel: responseModel } : {}) }),
+      setPhaseMapChannel: (phaseMapChannel) => this.update({ phaseMapChannel }),
       setDesignWavelength: (designWavelength) => this.update({ designWavelength }),
       setFocalLength: (focalLength) => this.update({ focalLength }),
       setDiameter: (diameter) => this.update({ diameter }),

@@ -2,6 +2,7 @@ import { computeFarField } from './farField';
 import { computeXY, computeXZ, FieldWindow } from './propagation';
 import { phaseResponse } from './rcwaLut';
 import type { FieldReply, FieldRequest } from './fieldClient';
+import { isVectorDevice, predictionSupport } from './vectorDevice';
 
 const worker = self as unknown as Worker;
 
@@ -26,10 +27,27 @@ function validate(request: FieldRequest): string | null {
   if (device.stokes && (!device.stokes.every(Number.isFinite) || Math.hypot(device.stokes[1], device.stokes[2], device.stokes[3]) === 0)) {
     return 'invalid polarization';
   }
+  if (isVectorDevice(device)) {
+    const design = device.design!;
+    if (design.kind === 'legacy') return null;
+    if (design.kind !== 'orthogonal' && design.kind !== 'hybrid') return 'invalid design';
+    if (design.kind === 'orthogonal' && (!Number.isFinite(design.basis.psi) ||
+      !Number.isFinite(design.basis.chi) || Math.abs(design.basis.chi) > Math.PI / 4)) return 'invalid design basis';
+    if (design.profiles.length !== 2) return 'two profiles are required';
+    for (const profile of design.profiles) {
+      if (![profile.focalLength, profile.deflectionAngle, profile.topologicalCharge, profile.hologramIterations].every(Number.isFinite)
+        || profile.focalLength <= 0) return 'invalid phase profile';
+      const mask = profile.cghPhaseMask;
+      if (profile.hologram && (!mask?.length || !mask[0]?.length ||
+        mask.some(row => row.length !== mask[0].length || row.some(v => !Number.isFinite(v))))) return 'invalid hologram mask';
+    }
+    if (device.responseModel === 'library') return predictionSupport(device);
+  }
   return null;
 }
 
 worker.onmessage = (event: MessageEvent<FieldRequest>) => {
+  try {
   const error = validate(event.data);
   if (error) {
     worker.postMessage({ request: event.data, error } satisfies FieldReply);
@@ -44,4 +62,7 @@ worker.onmessage = (event: MessageEvent<FieldRequest>) => {
   const field = solve(event.data);
   const reply: FieldReply = { request: event.data, field };
   worker.postMessage(reply, field.dataB ? [field.data.buffer, field.dataB.buffer] : [field.data.buffer]);
+  } catch (error) {
+    worker.postMessage({ request: event.data, error: error instanceof Error ? error.message : String(error) } satisfies FieldReply);
+  }
 };

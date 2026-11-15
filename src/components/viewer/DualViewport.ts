@@ -7,6 +7,8 @@ import { getDemonstrationIntensityScale, formatIntensityValue, IntensityScaleRan
 import { deviceFromState, fieldClient } from '@/lib/optics/fieldClient';
 import { pbResponse } from '@/lib/optics/finLut';
 import { Analyzer, cabs2, ellipseFromStokes, jonesFromStokes, PhaseMechanism, Stokes, stokesFromEllipse } from '@/lib/optics/polarization';
+import { MetasurfaceControls } from './MetasurfaceControls';
+import { designKey } from '@/lib/optics/metasurface';
 
 /** Input polarization presets as (ψ, χ) in degrees. */
 const POLARIZATION_PRESETS: Record<string, [number, number]> = {
@@ -49,6 +51,7 @@ export class DualViewport {
   private canvasSizes = new Map<Element, { w: number; h: number }>();
   private unsubscribe: (() => void) | null = null;
   private focusZ: number | null = null;
+  private metasurfaceControls: MetasurfaceControls | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -105,6 +108,10 @@ export class DualViewport {
                 <span>Phase map</span>
                 <canvas id="lattice-phase-map" width="128" height="128" role="img" aria-label="Ideal design phase across the circular aperture, from 0 to 2 pi"></canvas>
                 <div class="lattice-phase-scale"><span>0</span><span>Phase</span><span>2π</span></div>
+                <div class="lattice-phase-channel" role="group" aria-label="Phase map profile">
+                  <button type="button" class="active" data-phase-map-channel="0" aria-pressed="true">Profile 1</button>
+                  <button type="button" data-phase-map-channel="1" aria-pressed="false">Profile 2</button>
+                </div>
                 <span class="lattice-phase-axes">+y ↑ · +x →</span>
               </div>
             </div>
@@ -290,10 +297,9 @@ export class DualViewport {
               </span>
               <span class="panel-mode-tag" id="demo-mode-tag">Metalens Parameters</span>
             </div>
-            <div class="panel-header-right">
-              <span class="panel-hint">Controls directly drive the 3D lattice, XZ cross-section &amp; transverse XY slice in real time</span>
-            </div>
           </div>
+
+          <div id="metasurface-controls-host"></div>
 
           <!-- Multi-Gradient Superposition Combiner Bar -->
           <div class="multi-gradient-section" id="multi-gradient-section">
@@ -306,7 +312,6 @@ export class DualViewport {
                 </svg>
                 Phase Gradient Superposition <span class="math-tex">(\Phi_{\text{total}} = \sum \Phi_i)</span>:
               </div>
-              <div class="multi-gradient-hint">Combine independent phase functions into a multi-functional metasurface</div>
             </div>
 
             <!-- Active Gradient Toggle Chips -->
@@ -353,7 +358,11 @@ export class DualViewport {
                 <button type="button" class="seg-btn" data-mechanism="pb" aria-pressed="false" title="Identical rotated nanofins: Pancharatnam–Berry (geometric) phase">PB phase</button>
               </div>
             </div>
-            <div class="demo-helper-note" id="pol-mechanism-note"></div>
+            <details id="legacy-polarization-help" class="metasurface-help">
+              <summary>Learn more about polarization</summary>
+              <div class="demo-helper-note" id="pol-mechanism-note"></div>
+              <div class="demo-helper-note" id="pol-fin-readout"></div>
+            </details>
             <div class="polarization-grid">
               <div class="demo-control-group">
                 <div class="demo-control-label-row">
@@ -398,8 +407,9 @@ export class DualViewport {
                   <button type="button" class="seg-btn" data-analyzer="lcp" aria-pressed="false" title="Transmit only the LCP component">LCP</button>
                   <button type="button" class="seg-btn" data-analyzer="x" aria-pressed="false" title="Linear polarizer along x">X</button>
                   <button type="button" class="seg-btn" data-analyzer="y" aria-pressed="false" title="Linear polarizer along y">Y</button>
+                  <button type="button" class="seg-btn" data-analyzer="channel1" aria-pressed="false" title="Analyze output channel 1">Channel 1</button>
+                  <button type="button" class="seg-btn" data-analyzer="channel2" aria-pressed="false" title="Analyze output channel 2">Channel 2</button>
                 </div>
-                <div class="demo-helper-note" id="pol-fin-readout"></div>
               </div>
             </div>
           </div>
@@ -632,6 +642,8 @@ export class DualViewport {
   }
 
   private initComponents(): void {
+    const metasurfaceHost = this.container.querySelector<HTMLElement>('#metasurface-controls-host');
+    if (metasurfaceHost) this.metasurfaceControls = new MetasurfaceControls(metasurfaceHost);
     const wavefieldCanvas = this.container.querySelector<HTMLCanvasElement>('#wavefield-canvas');
     if (wavefieldCanvas) {
       this.wavefieldRenderer = new WavefieldRenderer(wavefieldCanvas);
@@ -842,6 +854,10 @@ export class DualViewport {
     analyzerBtns.forEach((btn) => btn.addEventListener('click', () => {
       opticsStore.getState().setAnalyzer(btn.dataset.analyzer as Analyzer);
     }));
+    const phaseMapBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-phase-map-channel]');
+    phaseMapBtns.forEach((btn) => btn.addEventListener('click', () => {
+      opticsStore.getState().setPhaseMapChannel(Number(btn.dataset.phaseMapChannel) as 0 | 1);
+    }));
     const polChips = this.container.querySelectorAll<HTMLButtonElement>('[data-pol]');
     const psiSlider = this.container.querySelector<HTMLInputElement>('#pol-slider-psi');
     const chiSlider = this.container.querySelector<HTMLInputElement>('#pol-slider-chi');
@@ -914,7 +930,7 @@ export class DualViewport {
         } else if (target === 'focal') {
           const state = opticsStore.getState();
           const paraxial = calculateChromaticFocalShift(state.designWavelength, state.wavelength, state.focalLength).operationalFocalLength;
-          opticsStore.getState().setProbeZ(Math.min(60, this.focusZ ?? paraxial));
+          opticsStore.getState().setProbeZ(Math.min(60, this.focusZ ?? (state.design.kind === 'legacy' ? paraxial : state.probeZ)));
         } else if (target === '50') {
           opticsStore.getState().setProbeZ(50.0);
         }
@@ -1123,9 +1139,11 @@ export class DualViewport {
     // Calibrates the display to the solved field and finds the true focus.
     const calibrate = (preserveRelative: boolean) => {
       const state = opticsStore.getState();
+      this.focusZ = null;
+      snapChips.forEach(chip => { if (chip.dataset.snapZ === 'focal' && state.design.kind !== 'legacy') chip.disabled = true; });
       fieldClient.request({ kind: 'overview', device: deviceFromState(state), halfX: 30, halfV: 60, nx: 256, nv: 128 }, ({ field }) => {
         if (!field) return;
-        this.focusZ = state.activeGradients.lens ? field.peakV : null;
+        this.focusZ = state.design.kind !== 'legacy' || state.activeGradients.lens ? field.peakV : null;
         applyScaleRange(getDemonstrationIntensityScale(field.peak), preserveRelative);
       });
     };
@@ -1179,6 +1197,11 @@ export class DualViewport {
         btn.classList.toggle('active', active);
         btn.setAttribute('aria-pressed', String(active));
       });
+      phaseMapBtns.forEach((btn) => {
+        const active = Number(btn.dataset.phaseMapChannel) === state.phaseMapChannel;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+      });
       const [, s1, s2, s3] = state.stokes;
       const polNorm = Math.hypot(s1, s2, s3) || 1;
       const { psi, chi } = ellipseFromStokes(state.stokes);
@@ -1211,6 +1234,7 @@ export class DualViewport {
         handedness.textContent = circular ? (chiDeg > 0 ? 'RCP' : 'LCP')
           : chiDeg === 0 ? `Linear ${psiDeg}°` : `${chiDeg > 0 ? 'Right' : 'Left'} elliptical`;
       }
+      this.container.querySelector('#legacy-polarization-help')?.toggleAttribute('hidden', state.design.kind !== 'legacy');
       const mechanismNote = this.container.querySelector('#pol-mechanism-note');
       if (mechanismNote) {
         mechanismNote.textContent = pb
@@ -1312,12 +1336,15 @@ export class DualViewport {
         modeTag.textContent = activeNames.length > 1
           ? `Superposition: ${activeNames.join(' + ')}`
           : (modeLabels[state.deviceType] || 'Demonstration Parameters');
+        if (state.design.kind !== 'legacy') modeTag.textContent = state.design.kind === 'orthogonal' ? 'Orthogonal polarization functions' : 'Dynamic + PB functions';
       }
 
       syncPolarization(state);
 
       // Sync Transverse XY Profile controls
-      const operationalFocal = calculateChromaticFocalShift(state.designWavelength, state.wavelength, state.focalLength).operationalFocalLength;
+      const selectedProfile = state.design.kind === 'legacy' ? null : state.design.profiles[state.phaseMapChannel];
+      const designFocal = selectedProfile?.focalLength ?? state.focalLength;
+      const operationalFocal = calculateChromaticFocalShift(state.designWavelength, state.wavelength, designFocal).operationalFocalLength;
       const pZ = state.probeZ ?? 25.0;
       if (xyProbeSlider && document.activeElement !== xyProbeSlider) {
         xyProbeSlider.value = pZ.toFixed(1);
@@ -1327,6 +1354,11 @@ export class DualViewport {
 
       snapChips.forEach((chip) => {
         const target = chip.dataset.snapZ;
+        if (target === 'focal') {
+          chip.textContent = state.design.kind === 'legacy' ? 'z = f' : 'z = peak';
+          chip.title = state.design.kind === 'legacy' ? 'Snap to the brightest focus' : 'Snap to the brightest point in the displayed XZ field';
+          chip.disabled = state.design.kind !== 'legacy' && this.focusZ === null;
+        }
         let isSnapActive = false;
         if (target === '0') isSnapActive = Math.abs(pZ - 0.0) < 0.25;
         else if (target === 'focal') isSnapActive = Math.abs(pZ - (this.focusZ ?? operationalFocal)) < 0.25;
@@ -1457,7 +1489,7 @@ export class DualViewport {
 
 
       // Check if demonstration or optical parameters changed
-      const demonstrationKey = `${state.deviceType}_${ag.lens}_${ag.deflect}_${ag.vortex}_${ag.hologram}_${state.wavelength}_${state.designWavelength}_${state.focalLength}_${state.diameter}_${state.deflectionAngle}_${state.topologicalCharge}_${state.hologramTarget}_${state.hologramIterations}_${Boolean(state.cghPhaseMask)}_${state.phaseMechanism}_${state.stokes.join(',')}_${state.analyzer}`;
+      const demonstrationKey = `${state.deviceType}_${ag.lens}_${ag.deflect}_${ag.vortex}_${ag.hologram}_${state.wavelength}_${state.designWavelength}_${state.focalLength}_${state.diameter}_${state.deflectionAngle}_${state.topologicalCharge}_${state.hologramTarget}_${state.hologramIterations}_${Boolean(state.cghPhaseMask)}_${state.phaseMechanism}_${state.stokes.join(',')}_${state.analyzer}_${designKey(state.design)}_${state.responseModel}_${state.phaseMapChannel}`;
       if (demonstrationKey !== lastDemonstrationKey) {
         lastDemonstrationKey = demonstrationKey;
         const deviceChanged = lastDeviceType !== state.deviceType;
@@ -1506,6 +1538,8 @@ export class DualViewport {
     this.xyRenderer?.destroy();
     this.farFieldRenderer?.destroy();
     this.latticeViewer?.destroy();
+    this.metasurfaceControls?.destroy();
+    this.metasurfaceControls = null;
   }
 }
 

@@ -1,6 +1,8 @@
 import { opticsStore, RenderMode } from '@/lib/store/useOpticsStore';
 import { FarFieldInput, FarFieldResult } from '@/lib/optics/farField';
-import { fieldClient } from '@/lib/optics/fieldClient';
+import { fieldClient, deviceFromState } from '@/lib/optics/fieldClient';
+import { deviceKey } from '@/lib/optics/propagation';
+import { predictionSupport } from '@/lib/optics/vectorDevice';
 import { colorizeFarField } from '@/lib/optics/farFieldColor';
 
 /** Renders the Fourier-transform far-field (angular spectrum) of the pillar lattice field. */
@@ -92,40 +94,28 @@ export class FarFieldRenderer {
   /** Recompute (only if parameters changed) and redraw. */
   public update(): void {
     const s = opticsStore.getState();
-    const ag = s.activeGradients || {
-      lens: s.deviceType === 'metalens',
-      deflect: s.deviceType === 'deflector',
-      vortex: s.deviceType === 'vortex',
-      hologram: s.deviceType === 'hologram',
-    };
-    const input: FarFieldInput = {
-      wavelength: s.wavelength,
-      designWavelength: s.designWavelength || 0.532,
-      focalLength: s.focalLength,
-      diameter: s.diameter,
-      deflectionAngle: s.deflectionAngle,
-      topologicalCharge: s.topologicalCharge,
-      lens: Boolean(ag.lens),
-      deflect: Boolean(ag.deflect),
-      vortex: Boolean(ag.vortex),
-      hologram: Boolean(ag.hologram),
-      cghPhaseMask: s.cghPhaseMask,
-      mechanism: s.phaseMechanism,
-      stokes: s.stokes,
-      analyzer: s.analyzer,
-    };
-    const key = JSON.stringify([
-      this.sinMax,
-      input.wavelength, input.designWavelength, input.focalLength, input.diameter,
-      input.deflectionAngle, input.topologicalCharge, input.lens, input.deflect,
-      input.vortex, input.hologram, input.hologram ? s.hologramTarget : '',
-      input.mechanism, input.stokes, input.analyzer,
-    ]);
+    const input: FarFieldInput = deviceFromState(s);
+    const key = `${this.sinMax}|${deviceKey(input)}`;
     if (key !== this.lastKey || (input.hologram && input.cghPhaseMask !== this.lastMask)) {
       this.lastKey = key;
       this.lastMask = input.cghPhaseMask;
-      fieldClient.request({ kind: 'far', device: input, halfX: this.sinMax, halfV: 0, nx: 256, nv: 256 }, ({ far }) => {
+      fieldClient.request({ kind: 'far', device: input, halfX: this.sinMax, halfV: 0, nx: 256, nv: 256 }, ({ far, error }) => {
+        if (key !== this.lastKey) return;
+        if (error) {
+          this.result = null;
+          this.ctx?.clearRect(0, 0, this.canvas.width, this.canvas.height);
+          const metrics = document.getElementById('metasurface-metrics');
+          if (metrics) metrics.textContent = `Prediction unavailable: ${error}`;
+          return;
+        }
         if (!far) return;
+        const metrics = document.getElementById('metasurface-metrics');
+        if (metrics && input.design && input.design.kind !== 'legacy') {
+          const d = far.diagnostics;
+          metrics.textContent = d
+            ? `Library prediction at illumination wavelength: transmission ${(100 * d.transmission).toFixed(1)}% for the current input; undesired output-channel power ${(100 * d.leakage[0]).toFixed(1)}% / ${(100 * d.leakage[1]).toFixed(1)}% for input channels 1 / 2; RMS Jones error ${d.rmsJonesError.toFixed(3)}. Powers are relative to incident power, independent of plot normalization.`
+            : `Library comparison unavailable: ${predictionSupport(input) ?? 'unsupported configuration'}`;
+        }
         this.result = far;
         this.draw();
       });

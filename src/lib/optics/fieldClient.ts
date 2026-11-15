@@ -36,6 +36,11 @@ export function deviceFromState(state: OpticsState): FarFieldInput {
     mechanism: state.phaseMechanism,
     stokes: state.stokes,
     analyzer: state.analyzer,
+    design: state.design,
+    responseModel: state.responseModel,
+    material: state.material,
+    pitchNm: state.pitchNm,
+    heightNm: state.heightNm,
     // The mask is only read in hologram mode; leaving it out saves cloning it into the worker.
     cghPhaseMask: gradients.hologram ? state.cghPhaseMask : null,
   };
@@ -73,7 +78,8 @@ class FieldClient {
           this.waiting.delete(kind);
           this.request(next.request, next.callback);
         }
-        callback?.(event.data);
+        // Superseded results must not flash an obsolete device in any viewport.
+        if (!next) callback?.(event.data);
       };
       this.worker.onerror = (event) => console.error('Field worker error:', event.message);
     }

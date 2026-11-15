@@ -124,7 +124,7 @@ export class WavefieldRenderer extends FieldCanvas {
     gl.uniform1i(u.uEnableLens, state.activeGradients.lens ? 1 : 0);
     gl.uniform1i(u.uEnableDeflect, state.activeGradients.deflect ? 1 : 0);
     gl.uniform1f(u.uProbeZ, state.probeZ ?? 25);
-    gl.uniform1i(u.uShowRays, this.showRays ? 1 : 0);
+    gl.uniform1i(u.uShowRays, this.showRays && (!state.design || state.design.kind === 'legacy') ? 1 : 0);
     gl.uniform2f(u.uFieldWindow, this.shown?.halfX ?? 1, this.shown?.halfV ?? 1);
   }
 

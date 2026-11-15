@@ -105,6 +105,8 @@ export abstract class FieldCanvas {
   private startTime = performance.now();
   private currentTime = 0;
   private requestedKey = '';
+  private keyedState: OpticsState | null = null;
+  private opticalKey = '';
 
   protected constructor(canvas: HTMLCanvasElement, fragmentSource: string, uniforms: string[]) {
     this.canvas = canvas;
@@ -171,12 +173,25 @@ export abstract class FieldCanvas {
     const request = this.fieldRequest(state);
     if (!request) return;
     const { device, ...view } = request;
-    const key = `${deviceKey(device)}#${JSON.stringify(view)}`;
+    // Store snapshots are immutable. Avoid rehashing both hologram masks every animation frame.
+    if (state !== this.keyedState) {
+      this.keyedState = state;
+      this.opticalKey = deviceKey(device);
+    }
+    const key = `${this.opticalKey}#${JSON.stringify(view)}`;
     if (key === this.requestedKey) return;
     this.requestedKey = key;
-    fieldClient.request(request, ({ request: solved, field }) => {
+    fieldClient.request(request, ({ request: solved, field, error }) => {
       const gl = this.gl;
-      if (!gl || !field) return;
+      if (!gl || key !== this.requestedKey) return;
+      if (error) {
+        gl.bindTexture(gl.TEXTURE_2D, this.texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, new Float32Array(4));
+        this.shown = null;
+        this.requestRender();
+        return;
+      }
+      if (!field) return;
       gl.bindTexture(gl.TEXTURE_2D, this.texture);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, field.nx, field.ny, 0, gl.RGBA, gl.FLOAT, interleave(field));
       this.shown = solved;
