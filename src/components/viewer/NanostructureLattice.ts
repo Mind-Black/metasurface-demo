@@ -5,6 +5,8 @@ import { targetPhaseToDiameter } from '@/lib/optics/rcwaLut';
 import { aperturePhase, FarFieldInput } from '@/lib/optics/farField';
 import { pbResponse } from '@/lib/optics/finLut';
 import { pbFinAngle } from '@/lib/optics/polarization';
+import { designKey, librarySupport, profilePhase, selectFin, targetJones } from '@/lib/optics/metasurface';
+import { deviceFromState } from '@/lib/optics/fieldClient';
 
 export function latticePositions(diameter: number, pitch: number): Array<[number, number]> {
   const radius = diameter / 2;
@@ -22,11 +24,13 @@ export function latticePositions(diameter: number, pitch: number): Array<[number
 
 /** Device description for `aperturePhase`; build once per rebuild rather than once per pillar. */
 export function latticePhaseInput(state: OpticsState): FarFieldInput {
-  return { ...state, ...state.activeGradients };
+  return deviceFromState(state);
 }
 
 export function latticeTargetPhase(state: OpticsState, x: number, y: number, input = latticePhaseInput(state)): number {
-  const phase = aperturePhase(input, x, y);
+  const phase = state.design && state.design.kind !== 'legacy'
+    ? profilePhase(state.design.profiles[state.phaseMapChannel ?? 0], x, y, state.designWavelength, state.diameter)
+    : aperturePhase(input, x, y);
   return ((phase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
 }
 
@@ -44,6 +48,10 @@ export function latticePillarGeometry(state: OpticsState, x: number, y: number, 
  */
 export function latticeFinGeometry(state: OpticsState, x: number, y: number, input = latticePhaseInput(state)) {
   const targetPhase = latticeTargetPhase(state, x, y, input);
+  if (state.design && state.design.kind !== 'legacy') {
+    const fin = selectFin(targetJones(state.design, x, y, state.designWavelength, state.diameter), state.designWavelength);
+    return { targetPhase, angle: fin.angle, lengthNm: fin.lengthNm, widthNm: fin.widthNm };
+  }
   const fin = pbResponse(state.designWavelength, state.designWavelength);
   return { targetPhase, angle: pbFinAngle(targetPhase), lengthNm: fin.lengthNm, widthNm: fin.widthNm };
 }
@@ -245,18 +253,22 @@ export class NanostructureLatticeViewer {
     if (!this.pillarMesh || !this.finMesh) return;
     const state = opticsStore.getState();
     const ag = state.activeGradients;
-    const fins = state.phaseMechanism === 'pb';
+    const vector = state.design && state.design.kind !== 'legacy';
+    const fins = vector || state.phaseMechanism === 'pb';
+    const unsupported = vector ? librarySupport(state.designWavelength, state.designWavelength,
+      state.material, state.pitchNm, state.heightNm) : null;
     const key = [state.diameter, state.designWavelength, state.focalLength,
       state.deflectionAngle, state.topologicalCharge, state.heightNm, state.pitchNm,
       state.material, state.phaseMechanism,
-      ag.lens, ag.deflect, ag.vortex, ag.hologram].join(':');
+      ag.lens, ag.deflect, ag.vortex, ag.hologram,
+      designKey(state.design ?? { kind: 'legacy' }), state.phaseMapChannel, state.responseModel].join(':');
     if (key === this.phaseMapKey && state.cghPhaseMask === this.phaseMapMask) return;
 
     const markerScale = state.diameter / 30;
     this.substrate?.scale.set(markerScale, markerScale, 1);
-    const heightUm = state.heightNm / 1000;
-    const pitch = state.pitchNm / 1000;
-    const positions = latticePositions(state.diameter, pitch);
+    const heightUm = vector ? 0.6 : state.heightNm / 1000;
+    const pitch = vector ? 0.25 : state.pitchNm / 1000;
+    const positions = unsupported ? [] : latticePositions(state.diameter, pitch);
     let targetMesh = fins ? this.finMesh : this.pillarMesh;
     if (positions.length > targetMesh.instanceMatrix.count) {
       const old = targetMesh;
@@ -269,7 +281,11 @@ export class NanostructureLatticeViewer {
       else this.pillarMesh = targetMesh;
     }
     this.pillarMesh.visible = !fins;
-    this.finMesh.visible = fins;
+    this.finMesh.visible = fins && !unsupported;
+    const note = document.getElementById('metasurface-geometry-note');
+    if (note && vector) note.textContent = unsupported
+      ? `Candidate geometry unavailable: ${unsupported} The phase map still shows the ideal target.`
+      : `${state.responseModel === 'ideal' ? 'Candidate implementation; fields show the exact ideal target.' : 'Fields use the displayed library-selected nanofins.'} TiO₂, 250 nm pitch, 600 nm height. Colors show ${state.design.kind === 'hybrid' ? (state.phaseMapChannel === 1 ? 'PB phase' : 'dynamic phase') : `target phase for channel ${state.phaseMapChannel === 1 ? 2 : 1}`}.`;
     const phaseInput = latticePhaseInput(state);
     let index = 0;
     for (const [x, y] of positions) {

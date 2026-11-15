@@ -14,7 +14,7 @@
  */
 
 export type PhaseMechanism = 'dynamic' | 'pb';
-export type Analyzer = 'none' | 'rcp' | 'lcp' | 'x' | 'y';
+export type Analyzer = 'none' | 'rcp' | 'lcp' | 'x' | 'y' | 'channel1' | 'channel2';
 export type Stokes = [number, number, number, number];
 
 export interface Complex { re: number; im: number }
@@ -79,6 +79,9 @@ export function analyzerWeights(analyzer: Exclude<Analyzer, 'none'>): { plus: Co
     case 'lcp': return { plus: c(0), minus: c(1) };
     case 'x': return { plus: c(SQRT1_2), minus: c(SQRT1_2) };
     case 'y': return { plus: c(0, SQRT1_2), minus: c(0, -SQRT1_2) };
+    // Legacy devices have no designed basis; use H/V as their channel pair.
+    case 'channel1': return analyzerWeights('x');
+    case 'channel2': return analyzerWeights('y');
   }
 }
 
@@ -98,6 +101,8 @@ export function finJones(tL: Complex, tS: Complex, theta: number): [[Complex, Co
  *   pb:      k0 + kPlus·e^{iφ} + kMinus·e^{−iφ}
  */
 export interface ChannelMix {
+  /** Component selected from a general Jones aperture; absent for legacy devices. */
+  apertureComponent?: 0 | 1;
   scale: Complex;
   k0: Complex;
   kPlus: Complex;
