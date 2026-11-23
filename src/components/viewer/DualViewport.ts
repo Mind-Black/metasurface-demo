@@ -93,15 +93,17 @@ export class DualViewport {
           </div>
         </header>
 
-        <div class="mobile-viewport-tabs" role="tablist" aria-label="Visualization">
-          <button type="button" id="tab-lattice" role="tab" aria-selected="true" aria-controls="lattice-card" data-viewport-tab="lattice-card" class="active">Lattice</button>
-          <button type="button" id="tab-wavefield" role="tab" aria-selected="false" aria-controls="wavefield-card" data-viewport-tab="wavefield-card" tabindex="-1">Wavefield</button>
-          <button type="button" id="tab-xy" role="tab" aria-selected="false" aria-controls="xy-card" data-viewport-tab="xy-card" tabindex="-1">XY Profile</button>
-          <button type="button" id="tab-farfield" role="tab" aria-selected="false" aria-controls="farfield-card" data-viewport-tab="farfield-card" tabindex="-1">Far Field</button>
-        </div>
+        <div class="viewport-workspace">
+          <div class="viewport-main">
+            <div class="mobile-viewport-tabs" role="tablist" aria-label="Visualization">
+              <button type="button" id="tab-lattice" role="tab" aria-selected="true" aria-controls="lattice-card" data-viewport-tab="lattice-card" class="active">Lattice</button>
+              <button type="button" id="tab-wavefield" role="tab" aria-selected="false" aria-controls="wavefield-card" data-viewport-tab="wavefield-card" tabindex="-1">Wavefield</button>
+              <button type="button" id="tab-xy" role="tab" aria-selected="false" aria-controls="xy-card" data-viewport-tab="xy-card" tabindex="-1">XY Profile</button>
+              <button type="button" id="tab-farfield" role="tab" aria-selected="false" aria-controls="farfield-card" data-viewport-tab="farfield-card" tabindex="-1">Far Field</button>
+            </div>
 
-        <!-- Viewports Split Screen -->
-        <div class="split-viewports">
+            <!-- Viewports Split Screen -->
+            <div class="split-viewports">
           <!-- Left: 3D Nanostructure Lattice View -->
           <div class="viewport-card mobile-active" id="lattice-card">
             <div class="viewport-header-badge">
@@ -290,9 +292,11 @@ export class DualViewport {
             </div>
           </div>
         </div>
+          </div>
 
-        <!-- Demonstration Sliders & Interactive Parameters Bar -->
-        <div class="viewport-controls-panel" id="viewport-controls-panel" role="region" aria-label="Demonstration Parameters">
+        <!-- Demonstration Sliders & Interactive Parameters Side Panel -->
+        <div class="viewport-controls-shell">
+        <aside class="viewport-controls-panel" id="viewport-controls-panel" aria-label="Demonstration Parameters">
           <div class="panel-header">
             <div class="panel-header-left">
               <span class="panel-title">
@@ -703,6 +707,8 @@ export class DualViewport {
             </div>
           </div>
           </div>
+        </aside>
+        </div>
         </div>
 
       </div>
