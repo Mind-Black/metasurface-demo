@@ -13,9 +13,11 @@ export function getMetalensTargetPhase(
   wavelength: number,
   focalLength: number
 ): number {
+  if (focalLength === 0) return 0;
   const r2 = x * x + y * y;
   const k0 = (2 * Math.PI) / wavelength;
-  const phase = -k0 * (Math.sqrt(r2 + focalLength * focalLength) - focalLength);
+  const sign = Math.sign(focalLength);
+  const phase = -sign * k0 * (Math.sqrt(r2 + focalLength * focalLength) - Math.abs(focalLength));
   return ((phase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
 }
 
@@ -92,8 +94,8 @@ export function getPBRotationAngle(targetPhase: number, helicity: 1 | -1 = 1): n
  * Computes Numerical Aperture: NA = sin(arctan(D / (2 * f)))
  */
 export function calculateNumericalAperture(diameter: number, focalLength: number): number {
-  if (focalLength <= 0 || diameter <= 0) return 0;
-  const halfAngle = Math.atan(diameter / (2 * focalLength));
+  if (focalLength === 0 || !Number.isFinite(focalLength) || diameter <= 0) return 0;
+  const halfAngle = Math.atan(diameter / (2 * Math.abs(focalLength)));
   return Math.sin(halfAngle);
 }
 

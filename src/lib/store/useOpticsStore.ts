@@ -169,8 +169,8 @@ class OpticsStore {
           if (i !== index) return profile;
           const updated = { ...profile, ...patch };
           if (![updated.focalLength, updated.deflectionAngle, updated.topologicalCharge, updated.axiconNA, updated.hologramIterations].every(Number.isFinite)
-            || updated.focalLength <= 0 || Math.abs(updated.axiconNA) >= 1) {
-            throw new RangeError('Profile parameters must be finite, focal length positive, and |axicon NA| < 1.');
+            || updated.focalLength === 0 || Math.abs(updated.axiconNA) >= 1) {
+            throw new RangeError('Profile parameters must be finite, focal length nonzero, and |axicon NA| < 1.');
           }
           updated.topologicalCharge = Math.max(-10, Math.min(10, Math.round(updated.topologicalCharge)));
           updated.hologramIterations = Math.max(1, Math.min(MAX_HOLOGRAM_ITERATIONS, Math.round(updated.hologramIterations)));
@@ -196,7 +196,9 @@ class OpticsStore {
           : this.state.design.kind === 'hybrid' ? { savedHybridResponseModel: responseModel } : {}) }),
       setPhaseMapChannel: (phaseMapChannel) => this.update({ phaseMapChannel }),
       setDesignWavelength: (designWavelength) => this.update({ designWavelength }),
-      setFocalLength: (focalLength) => this.update({ focalLength }),
+      setFocalLength: (focalLength) => {
+        if (Number.isFinite(focalLength) && focalLength !== 0) this.update({ focalLength });
+      },
       setDiameter: (diameter) => this.update({ diameter }),
       setDeviceType: (deviceType) => {
         const activeGradients: ActiveGradients = {

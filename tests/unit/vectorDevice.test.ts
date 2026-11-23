@@ -127,6 +127,27 @@ describe('vector metasurface propagation', () => {
     store.setDesignKind('legacy');
   });
 
+  it('allows negative and arbitrary nonzero focal lengths in profiles and legacy store, rejecting zero', () => {
+    const store = opticsStore.getState();
+    const initialFocal = store.focalLength;
+    try {
+      store.setFocalLength(-32.5);
+      expect(opticsStore.getState().focalLength).toBe(-32.5);
+      store.setFocalLength(0);
+      expect(opticsStore.getState().focalLength).toBe(-32.5);
+
+      store.setDesignKind('orthogonal');
+      store.setProfile(0, { focalLength: -18.5 });
+      expect((opticsStore.getState().design as Extract<NonNullable<FarFieldInput['design']>, { kind: 'orthogonal' }>).profiles[0].focalLength).toBe(-18.5);
+      store.setProfile(0, { focalLength: 140 });
+      expect((opticsStore.getState().design as Extract<NonNullable<FarFieldInput['design']>, { kind: 'orthogonal' }>).profiles[0].focalLength).toBe(140);
+      expect(() => store.setProfile(0, { focalLength: 0 })).toThrow(RangeError);
+    } finally {
+      store.setDesignKind('legacy');
+      store.setFocalLength(initialFocal);
+    }
+  });
+
   it('keeps each response selection while new configurations initially use the ideal target', () => {
     const initial = opticsStore.getState();
     try {

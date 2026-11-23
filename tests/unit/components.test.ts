@@ -187,6 +187,9 @@ describe('OpticsStore Reactive State Management', () => {
     const template = DualViewport.getTemplate();
     expect(template).toContain('id="viewport-controls-panel"');
     expect(template).toContain('id="demo-slider-focal"');
+    expect(template).toContain('id="demo-input-focal"');
+    expect(template).toMatch(/id="demo-slider-focal"[^>]*min="-45"/);
+    expect(template).toContain('data-demo-focal="-25"');
     expect(template).toContain('id="demo-slider-diameter"');
     expect(template).toMatch(/id="demo-slider-diameter"[^>]*max="50"/);
     expect(template.match(/aria-label="Demonstration Aperture Diameter"/g)).toHaveLength(1);

@@ -41,6 +41,26 @@ describe('Benchmark 1: Metalens Focal Spot & NA Mechanics', () => {
     const phaseCenter = getMetalensTargetPhase(0.0, 0.0, lambda, f);
     expect(phaseCenter).toBeCloseTo(0.0, 5);
   });
+
+  it('supports negative focal lengths (diverging lens) with conjugate phase and valid NA', () => {
+    const lambda = 0.532;
+    const f = -25.0;
+    const D = 30.0;
+
+    expect(calculateNumericalAperture(D, f)).toBeCloseTo(calculateNumericalAperture(D, 25.0), 6);
+    expect(calculateNumericalAperture(D, 0)).toBe(0);
+
+    expect(getMetalensTargetPhase(0, 0, lambda, f)).toBeCloseTo(0, 5);
+    expect(getMetalensTargetPhase(5, 0, lambda, f)).toBeCloseTo(getMetalensTargetPhase(-5, 0, lambda, f), 5);
+
+    const phasePos = getMetalensTargetPhase(5.0, 0.0, lambda, 25.0);
+    const phaseNeg = getMetalensTargetPhase(5.0, 0.0, lambda, -25.0);
+    expect((phasePos + phaseNeg) % (2 * Math.PI)).toBeCloseTo(0, 5);
+
+    const shift = calculateChromaticFocalShift(0.532, 0.650, -25.0);
+    expect(shift.operationalFocalLength).toBeCloseTo(-20.4615, 2);
+    expect(shift.deltaFocalLength).toBeCloseTo(4.538, 2);
+  });
 });
 
 describe('Benchmark 2: Chromatic Aberration & Dispersion', () => {

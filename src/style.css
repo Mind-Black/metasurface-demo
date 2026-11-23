@@ -982,6 +982,39 @@ body {
   cursor: pointer;
 }
 
+.demo-number-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.74rem;
+  color: var(--text-dim);
+}
+
+.demo-number-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.demo-number-input {
+  width: 5.5rem;
+  min-width: 0;
+  padding: 0.22rem 0.4rem;
+  border: 1px solid #30394c;
+  border-radius: 0.35rem;
+  background: #080d1b;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.demo-number-input:focus {
+  outline: none;
+  border-color: var(--accent-cyan);
+}
+
 .demo-presets-row {
   display: flex;
   gap: 0.35rem;

@@ -10,6 +10,12 @@ test('desktop design modes keep their profile settings and response choice', asy
   await controls.locator('[data-design-kind="orthogonal"]').click();
   await expect(controls).toHaveAttribute('data-design-kind', 'orthogonal');
   const focal = controls.locator('[data-profile-index="0"][data-profile-field="focalLength"]');
+  await focal.fill('-25');
+  await focal.dispatchEvent('input');
+  await expect(focal).toHaveValue('-25');
+  await focal.fill('150');
+  await focal.dispatchEvent('input');
+  await expect(focal).toHaveValue('150');
   await focal.fill('31');
   await focal.dispatchEvent('input');
   await controls.locator('[data-response="library"]').click();
@@ -101,6 +107,12 @@ test('Learn more disclosure stays open across profile and mode updates', async (
   const defaultLens = controls.locator('[data-profile-index="0"][data-profile-field="lens"]');
   await expect(defaultLens).toBeChecked();
   const focal = controls.locator('[data-profile-index="0"][data-profile-field="focalLength"]');
+  await focal.fill('-25');
+  await focal.dispatchEvent('input');
+  await expect(focal).toHaveValue('-25');
+  await focal.fill('150');
+  await focal.dispatchEvent('input');
+  await expect(focal).toHaveValue('150');
   await focal.fill('31');
   await focal.dispatchEvent('input');
   await expect(learnMore).toHaveAttribute('open', '');

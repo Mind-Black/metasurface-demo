@@ -39,7 +39,7 @@ function validate(request: FieldRequest): string | null {
     if (design.profiles.length !== 2) return 'two profiles are required';
     for (const profile of design.profiles) {
       if (![profile.focalLength, profile.deflectionAngle, profile.topologicalCharge, profile.axiconNA, profile.hologramIterations].every(Number.isFinite)
-        || profile.focalLength <= 0 || Math.abs(profile.axiconNA) >= 1) return 'invalid phase profile';
+        || profile.focalLength === 0 || Math.abs(profile.axiconNA) >= 1) return 'invalid phase profile';
       const mask = profile.cghPhaseMask;
       if (profile.hologram && (!mask?.length || !mask[0]?.length ||
         mask.some(row => row.length !== mask[0].length || row.some(v => !Number.isFinite(v))))) return 'invalid hologram mask';

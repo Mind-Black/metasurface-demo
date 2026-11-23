@@ -85,8 +85,9 @@ export interface FarFieldResult {
 export function aperturePhase(p: FarFieldInput, x: number, y: number): number {
   const kDesign = (2 * Math.PI) / Math.max(0.2, p.designWavelength);
   let phase = 0;
-  if (p.lens) {
-    phase += -kDesign * (Math.sqrt(x * x + y * y + p.focalLength * p.focalLength) - p.focalLength);
+  if (p.lens && p.focalLength !== 0) {
+    const sign = Math.sign(p.focalLength);
+    phase += -sign * kDesign * (Math.sqrt(x * x + y * y + p.focalLength * p.focalLength) - Math.abs(p.focalLength));
   }
   if (p.deflect) phase += kDesign * Math.sin(p.deflectionAngle) * x;
   if (p.vortex) phase += p.topologicalCharge * Math.atan2(y, x);

@@ -79,10 +79,11 @@ export class MetasurfaceControls {
     if (field) {
       const idx = Number(input.dataset.profileIndex) as 0 | 1;
       let value: boolean | number | string = input.type === 'checkbox' ? input.checked : input.tagName === 'SELECT' ? input.value : Number(input.value);
+      if (field === 'focalLength' && value === 0) return;
       if (field === 'deflectionAngle' && typeof value === 'number') value = rad(value);
       if (typeof value === 'number') {
         const bounds: Record<string, [number, number, number?]> = {
-          focalLength: [1, 100], deflectionAngle: [rad(-60), rad(60)], topologicalCharge: [-10, 10, 1], axiconNA: [-0.85, 0.85], hologramIterations: [1, 500, 1],
+          deflectionAngle: [rad(-60), rad(60)], topologicalCharge: [-10, 10, 1], axiconNA: [-0.85, 0.85], hologramIterations: [1, 500, 1],
         };
         const [min, max, step] = bounds[field] ?? [-Infinity, Infinity];
         value = Math.max(min, Math.min(max, value));
@@ -183,11 +184,15 @@ export class MetasurfaceControls {
   private profileMarkup(profile: PhaseProfile, index: number, kind: DeviceDesign['kind']): string {
     const title = kind === 'hybrid' ? (index === 0 ? 'Dynamic phase' : 'PB phase') : `Channel ${index + 1}`;
     const check = (key: keyof PhaseProfile, label: string, description: string) => `<label class="profile-function" title="${description}"><input type="checkbox" data-profile-index="${index}" data-profile-field="${key}" title="${description}" ${profile[key] ? 'checked' : ''}>${label}</label>`;
-    const number = (key: keyof PhaseProfile, label: string, value: number, min: number, max: number, step: number, unit: string) => `<label class="profile-number">${label}<span><input type="number" data-profile-index="${index}" data-profile-field="${key}" value="${value}" min="${min}" max="${max}" step="${step}"><small>${unit}</small></span></label>`;
+    const number = (key: keyof PhaseProfile, label: string, value: number, min: number | undefined, max: number | undefined, step: number | 'any', unit: string) => {
+      const minAttr = min === undefined ? '' : ` min="${min}"`;
+      const maxAttr = max === undefined ? '' : ` max="${max}"`;
+      return `<label class="profile-number">${label}<span><input type="number" data-profile-index="${index}" data-profile-field="${key}" value="${value}"${minAttr}${maxAttr} step="${step}"><small>${unit}</small></span></label>`;
+    };
     const hologram = profile.hologram ? `<div class="profile-extra"><label class="profile-number">Target<select data-profile-index="${index}" data-profile-field="hologramTarget"><option value="crest" ${profile.hologramTarget === 'crest' ? 'selected' : ''}>Crest</option><option value="smiley" ${profile.hologramTarget === 'smiley' ? 'selected' : ''}>Smiley</option><option value="mu" ${profile.hologramTarget === 'mu' ? 'selected' : ''}>μ</option></select></label>${number('hologramIterations','Iterations',profile.hologramIterations,1,500,1,'')}</div>` : '';
     return `<article class="metasurface-profile-card"><header><h4>${title}</h4><span>Profile ${index+1}</span></header>
       <div class="profile-functions">${check('lens','Lens','Add a focusing phase profile.')}${check('deflect','Deflect','Add a linear phase ramp to steer the beam.')}${check('vortex','Vortex','Add an orbital angular momentum phase profile.')}${check('axicon','Axicon','Add a conical radial phase profile for Bessel-beam generation.')}${check('hologram','Hologram','Add an iterative phase-only hologram.')}</div>
-      <div class="profile-parameters">${number('focalLength','Focal length',profile.focalLength,1,100,0.5,'µm')}${number('deflectionAngle','Deflection angle',deg(profile.deflectionAngle),-60,60,1,'°')}${number('topologicalCharge','Topological charge',profile.topologicalCharge,-10,10,1,'ℓ')}${number('axiconNA','Axicon NA',profile.axiconNA,-0.85,0.85,0.05,'')}</div>
+      <div class="profile-parameters">${number('focalLength','Focal length',profile.focalLength,undefined,undefined,'any','µm')}${number('deflectionAngle','Deflection angle',deg(profile.deflectionAngle),-60,60,1,'°')}${number('topologicalCharge','Topological charge',profile.topologicalCharge,-10,10,1,'ℓ')}${number('axiconNA','Axicon NA',profile.axiconNA,-0.85,0.85,0.05,'')}</div>
       ${hologram}</article>`;
   }
 }

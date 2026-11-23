@@ -487,7 +487,7 @@ export class DualViewport {
           <!-- 1. Metalens Mode Controls -->
           <div class="demo-mode-panel" id="demo-controls-metalens">
             <div class="demo-controls-grid">
-              <!-- Focal Length Slider -->
+              <!-- Focal Length Slider & Manual Input -->
               <div class="demo-control-group">
                 <div class="demo-control-label-row">
                   <label for="demo-slider-focal" class="demo-label">
@@ -499,13 +499,28 @@ export class DualViewport {
                   type="range"
                   id="demo-slider-focal"
                   class="demo-slider-input"
-                  min="10"
+                  min="-45"
                   max="45"
                   step="any"
                   value="25"
                   aria-label="Demonstration Focal Length"
                 />
+                <div class="demo-number-row">
+                  <label for="demo-input-focal" class="demo-number-label">Manual <span class="math-tex">f</span>:</label>
+                  <span class="demo-number-field">
+                    <input
+                      type="number"
+                      id="demo-input-focal"
+                      class="demo-number-input"
+                      step="any"
+                      value="25"
+                      aria-label="Manual Focal Length in micrometers"
+                    />
+                    <small>µm</small>
+                  </span>
+                </div>
                 <div class="demo-presets-row">
+                  <button type="button" class="demo-chip" data-demo-focal="-25">Negative (-25 µm)</button>
                   <button type="button" class="demo-chip" data-demo-focal="15">Short (15 µm)</button>
                   <button type="button" class="demo-chip active" data-demo-focal="25">Nominal (25 µm)</button>
                   <button type="button" class="demo-chip" data-demo-focal="38">Long (38 µm)</button>
@@ -1012,7 +1027,7 @@ export class DualViewport {
               return Number.isFinite(zMax) && zMax > 0 ? Math.min(60, zMax / 2) : state.probeZ;
             })()
             : paraxial;
-          opticsStore.getState().setProbeZ(Math.min(60, this.focusZ ?? (state.design.kind === 'legacy' ? legacyFallback : state.probeZ)));
+          opticsStore.getState().setProbeZ(Math.max(0, Math.min(60, this.focusZ ?? (state.design.kind === 'legacy' ? legacyFallback : state.probeZ))));
         } else if (target === '50') {
           opticsStore.getState().setProbeZ(50.0);
         }
@@ -1048,6 +1063,7 @@ export class DualViewport {
     // --- Demonstration Controls Panel Listeners ---
     // Metalens controls
     const demoFocalSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-focal');
+    const demoFocalInput = this.container.querySelector<HTMLInputElement>('#demo-input-focal');
     const demoDiamSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-diameter');
     const demoWlSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-wavelength');
     const demoMatBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-demo-mat]');
@@ -1057,10 +1073,34 @@ export class DualViewport {
 
     demoFocalSlider?.addEventListener('input', () => {
       const f = parseFloat(demoFocalSlider.value);
-      if (!isNaN(f)) {
+      if (Number.isFinite(f) && f !== 0) {
         const state = opticsStore.getState();
         state.setFocalLength(f * state.wavelength / state.designWavelength);
       }
+    });
+
+    demoFocalSlider?.addEventListener('change', () => {
+      const f = parseFloat(demoFocalSlider.value);
+      if (f === 0) {
+        const state = opticsStore.getState();
+        const operationalFocal = calculateChromaticFocalShift(state.designWavelength, state.wavelength, state.focalLength).operationalFocalLength;
+        demoFocalSlider.value = operationalFocal.toString();
+      }
+    });
+
+    demoFocalInput?.addEventListener('input', () => {
+      if (demoFocalInput.value === '') return;
+      const f = Number(demoFocalInput.value);
+      if (Number.isFinite(f) && f !== 0) {
+        const state = opticsStore.getState();
+        state.setFocalLength(f * state.wavelength / state.designWavelength);
+      }
+    });
+
+    demoFocalInput?.addEventListener('blur', () => {
+      const state = opticsStore.getState();
+      const operationalFocal = calculateChromaticFocalShift(state.designWavelength, state.wavelength, state.focalLength).operationalFocalLength;
+      demoFocalInput.value = Number(operationalFocal.toFixed(4)).toString();
     });
 
     demoDiamSlider?.addEventListener('input', () => {
@@ -1513,10 +1553,17 @@ export class DualViewport {
       // Sync Metalens controls
       const labelDemoFocal = this.container.querySelector('#demo-label-focal');
       if (labelDemoFocal) labelDemoFocal.textContent = `${operationalFocal.toFixed(1)} µm`;
-      if (demoFocalSlider) {
-        demoFocalSlider.min = Math.min(10, operationalFocal).toString();
-        demoFocalSlider.max = Math.max(45, operationalFocal).toString();
-        if (document.activeElement !== demoFocalSlider) demoFocalSlider.value = operationalFocal.toString();
+      if (demoFocalSlider && document.activeElement !== demoFocalSlider) {
+        const nextMin = Math.min(-45, operationalFocal).toString();
+        const nextMax = Math.max(45, operationalFocal).toString();
+        const nextVal = operationalFocal.toString();
+        if (demoFocalSlider.min !== nextMin) demoFocalSlider.min = nextMin;
+        if (demoFocalSlider.max !== nextMax) demoFocalSlider.max = nextMax;
+        if (demoFocalSlider.value !== nextVal) demoFocalSlider.value = nextVal;
+      }
+      if (demoFocalInput && document.activeElement !== demoFocalInput) {
+        const nextInputVal = Number(operationalFocal.toFixed(4)).toString();
+        if (demoFocalInput.value !== nextInputVal) demoFocalInput.value = nextInputVal;
       }
 
       const latticeDiameter = this.container.querySelector('#lattice-diameter');

@@ -143,6 +143,26 @@ describe('angular-spectrum engine vs independent references', () => {
     expect(fwhm(values, 6 / 241)).toBeCloseTo((0.514 * 0.532) / na, 1);
   });
 
+  it('diverges a negative metalens instead of focusing at |f|', () => {
+    const pos = computeXZ(lens, 25, 45, 101, 90);
+    const neg = computeXZ({ ...lens, focalLength: -25 }, 25, 45, 101, 90);
+    expect(neg.peak).toBeLessThan(0.1 * pos.peak);
+    const rmsRadius = (z: number) => {
+      const w = computeXY({ ...lens, focalLength: -25 }, z, 40, 0.25, 161, 1);
+      const dx = 80 / 161;
+      let sumI = 0;
+      let sumX2 = 0;
+      for (let i = 0; i < 161; i++) {
+        const x = -40 + (i + 0.5) * dx;
+        const v = intensity(w, i);
+        sumI += v;
+        sumX2 += v * x * x;
+      }
+      return Math.sqrt(sumX2 / sumI);
+    };
+    expect(rmsRadius(25)).toBeGreaterThan(rmsRadius(5));
+  });
+
   it('forms a clean deflected disc in the XY plane, not speckle', () => {
     const p = { ...base, deflect: true };
     const w = computeXY(p, 25, 25, 25, 161, 161);

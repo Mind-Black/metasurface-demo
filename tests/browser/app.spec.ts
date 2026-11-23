@@ -128,5 +128,25 @@ test.describe('Optical Metasurfaces Platform E2E Tests', () => {
     const chipShort = page.locator('button[data-demo-focal="15"]');
     await chipShort.click();
     await expect(page.locator('#demo-label-focal')).toContainText('15.0 µm');
+
+    // Manual input supports arbitrary values and negative (diverging) focal lengths
+    const demoFocalInput = page.locator('#demo-input-focal');
+    await expect(demoFocalInput).toBeVisible();
+    await demoFocalInput.fill('75');
+    await demoFocalInput.dispatchEvent('input');
+    await expect(page.locator('#demo-label-focal')).toContainText('75.0 µm');
+    await expect(demoFocalSlider).toHaveValue('75');
+
+    await demoFocalInput.fill('-25');
+    await demoFocalInput.dispatchEvent('input');
+    await expect(page.locator('#demo-label-focal')).toContainText('-25.0 µm');
+    await expect(page.locator('button[data-demo-focal="-25"]')).toHaveClass(/active/);
+
+    // Invalid zero value reverts on blur without breaking state
+    await demoFocalInput.fill('0');
+    await demoFocalInput.dispatchEvent('input');
+    await demoFocalInput.blur();
+    await expect(demoFocalInput).toHaveValue('-25');
+    await expect(page.locator('#demo-label-focal')).toContainText('-25.0 µm');
   });
 });

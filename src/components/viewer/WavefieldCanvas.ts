@@ -52,7 +52,7 @@ void main() {
       if (uEnableAxicon == 1 && r == 0) continue;
       float rayX0 = float(r) * (radius / 4.5);
       float s = 0.0;
-      if (uEnableLens == 1) s -= rayX0 / sqrt(rayX0 * rayX0 + uFocalLength * uFocalLength);
+      if (uEnableLens == 1 && uFocalLength != 0.0) s -= sign(uFocalLength) * rayX0 / sqrt(rayX0 * rayX0 + uFocalLength * uFocalLength);
       if (uEnableDeflect == 1) s += sin(uDeflectionAngle);
       if (uEnableAxicon == 1) s -= sign(rayX0) * uAxiconNA;
       s *= uWavelength / uDesignWavelength;
