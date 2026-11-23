@@ -2470,8 +2470,7 @@ strong {
 .profile-functions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .profile-function { display: inline-flex; align-items: center; gap: 0.28rem; padding: 0.28rem 0.42rem; border: 1px solid #2a3446; border-radius: 0.35rem; color: #cbd5e1; font-size: 0.72rem; cursor: pointer; }
 .profile-function input { accent-color: var(--accent-cyan); }
-.profile-parameters, .profile-extra { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.55rem; }
-.profile-extra { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.profile-parameters, .profile-extra { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.55rem; }
 .profile-number { display: grid; gap: 0.2rem; color: var(--text-dim); font-size: 0.68rem; }
 .profile-number > span { display: flex; align-items: center; gap: 0.2rem; }
 .profile-number input, .profile-number select { width: 100%; }
@@ -2506,10 +2505,12 @@ strong {
 .dual-viewport-root:has(#metasurface-controls-host[data-design-kind="orthogonal"]) #demo-controls-metalens,
 .dual-viewport-root:has(#metasurface-controls-host[data-design-kind="orthogonal"]) #demo-controls-deflector,
 .dual-viewport-root:has(#metasurface-controls-host[data-design-kind="orthogonal"]) #demo-controls-vortex,
+.dual-viewport-root:has(#metasurface-controls-host[data-design-kind="orthogonal"]) #demo-controls-axicon,
 .dual-viewport-root:has(#metasurface-controls-host[data-design-kind="orthogonal"]) #demo-controls-hologram,
 .dual-viewport-root:has(#metasurface-controls-host[data-design-kind="hybrid"]) #demo-controls-metalens,
 .dual-viewport-root:has(#metasurface-controls-host[data-design-kind="hybrid"]) #demo-controls-deflector,
 .dual-viewport-root:has(#metasurface-controls-host[data-design-kind="hybrid"]) #demo-controls-vortex,
+.dual-viewport-root:has(#metasurface-controls-host[data-design-kind="hybrid"]) #demo-controls-axicon,
 .dual-viewport-root:has(#metasurface-controls-host[data-design-kind="hybrid"]) #demo-controls-hologram { display: none !important; }
 @media (max-width: 760px) {
   .metasurface-controls-head { flex-direction: column; }

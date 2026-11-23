@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { aperturePhase, FarFieldInput } from '@/lib/optics/farField';
+import { calculateBesselSpotFWHM } from '@/lib/optics/phaseProfiles';
 import { computeXY, computeXZ, deviceKey, fft } from '@/lib/optics/propagation';
 import { phaseResponse, TABLE_PITCH_UM } from '@/lib/optics/rcwaLut';
 
@@ -188,5 +189,33 @@ describe('angular-spectrum engine vs independent references', () => {
   it('keys the device on everything that changes the field', () => {
     expect(deviceKey(lens)).not.toBe(deviceKey({ ...lens, wavelength: 0.65 }));
     expect(deviceKey(lens)).toBe(deviceKey({ ...lens }));
+    const ax1 = { ...base, axicon: true, axiconNA: 0.35 };
+    const ax2 = { ...base, axicon: true, axiconNA: 0.50 };
+    expect(deviceKey(ax1)).not.toBe(deviceKey(base));
+    expect(deviceKey(ax1)).not.toBe(deviceKey(ax2));
+    expect(deviceKey({ ...base, axicon: false, axiconNA: 0.35 })).toBe(deviceKey({ ...base, axicon: false, axiconNA: 0.50 }));
+  });
+
+  it('forms an extended non-diffracting Bessel needle for a converging axicon', () => {
+    const ax = { ...base, axicon: true, axiconNA: 0.35 };
+    const expectedFwhm = calculateBesselSpotFWHM(0.532, 0.35);
+    for (const z of [14, 22, 30]) {
+      const cut = computeXY(ax, z, 3, 0.02, 241, 1);
+      expect(Math.abs(cut.peakX)).toBeLessThan(0.1);
+      expect(cut.peak).toBeGreaterThan(15);
+      const values = Array.from({ length: 241 }, (_, i) => intensity(cut, i));
+      expect(fwhm(values, 6 / 241)).toBeCloseTo(expectedFwhm, 1);
+    }
+  });
+
+  it('gives an axicon + vortex higher-order Bessel beam an on-axis null across the Bessel zone', () => {
+    const p = { ...base, axicon: true, axiconNA: 0.35, vortex: true, topologicalCharge: 1 };
+    const w = computeXZ(p, 8, 40, 201, 80);
+    for (const row of [25, 45, 60]) {
+      let max = 0;
+      for (let col = 0; col < 201; col++) max = Math.max(max, intensity(w, row * 201 + col));
+      expect(max).toBeGreaterThan(2);
+      expect(intensity(w, row * 201 + 100) / max).toBeLessThan(0.02);
+    }
   });
 });

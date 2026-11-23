@@ -16,8 +16,10 @@ uniform float uDesignWavelength; // fabrication design wavelength [µm]
 uniform float uFocalLength;      // design focal length [µm]
 uniform float uDiameter;         // aperture diameter [µm]
 uniform float uDeflectionAngle;  // design deflection [rad]
+uniform float uAxiconNA;         // design axicon NA = sin(theta_a)
 uniform int   uEnableLens;
 uniform int   uEnableDeflect;
+uniform int   uEnableAxicon;
 uniform float uProbeZ;           // selected z slice [µm]
 uniform int   uRenderMode;       // 0: Re{E}, 1: |E|², 2: arg(E)
 uniform int   uLogIntensity;
@@ -43,14 +45,16 @@ void main() {
   vec3 baseColor = fieldColor(field, dot(fieldSample, fieldSample), uRenderMode, uLogIntensity, uIntensityMax);
   float radius = uDiameter * 0.5;
 
-  // Each ray leaves with the local grating direction sinθ = (λ/λ0)(sinθ_deflect - r/√(r²+f²));
+  // Each ray leaves with the local grating direction sinθ = (λ/λ0)(sinθ_deflect - r/√(r²+f²) - sgn(r)·NA_axicon);
   // rays that would need sinθ > 1 are evanescent and are not drawn.
-  if (uShowRays == 1 && (uEnableLens == 1 || uEnableDeflect == 1)) {
+  if (uShowRays == 1 && (uEnableLens == 1 || uEnableDeflect == 1 || uEnableAxicon == 1)) {
     for (int r = -4; r <= 4; r++) {
+      if (uEnableAxicon == 1 && r == 0) continue;
       float rayX0 = float(r) * (radius / 4.5);
       float s = 0.0;
       if (uEnableLens == 1) s -= rayX0 / sqrt(rayX0 * rayX0 + uFocalLength * uFocalLength);
       if (uEnableDeflect == 1) s += sin(uDeflectionAngle);
+      if (uEnableAxicon == 1) s -= sign(rayX0) * uAxiconNA;
       s *= uWavelength / uDesignWavelength;
       if (abs(s) >= 1.0) continue;
       vec2 dir = vec2(s, sqrt(1.0 - s * s));
@@ -101,7 +105,7 @@ export class WavefieldRenderer extends FieldCanvas {
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas, FS_SOURCE, ['uZoom', 'uWavelength', 'uDesignWavelength', 'uFocalLength', 'uDiameter',
-      'uDeflectionAngle', 'uEnableLens', 'uEnableDeflect', 'uProbeZ', 'uShowRays', 'uFieldWindow']);
+      'uDeflectionAngle', 'uAxiconNA', 'uEnableLens', 'uEnableDeflect', 'uEnableAxicon', 'uProbeZ', 'uShowRays', 'uFieldWindow']);
     this.canvas.style.cursor = 'crosshair';
     this.canvas.addEventListener('pointerdown', this.onPointerDown);
     this.canvas.addEventListener('pointermove', this.onPointerMove);
@@ -121,8 +125,10 @@ export class WavefieldRenderer extends FieldCanvas {
     gl.uniform1f(u.uFocalLength, state.focalLength);
     gl.uniform1f(u.uDiameter, state.diameter);
     gl.uniform1f(u.uDeflectionAngle, state.deflectionAngle);
+    gl.uniform1f(u.uAxiconNA, state.axiconNA);
     gl.uniform1i(u.uEnableLens, state.activeGradients.lens ? 1 : 0);
     gl.uniform1i(u.uEnableDeflect, state.activeGradients.deflect ? 1 : 0);
+    gl.uniform1i(u.uEnableAxicon, state.activeGradients.axicon ? 1 : 0);
     gl.uniform1f(u.uProbeZ, state.probeZ ?? 25);
     gl.uniform1i(u.uShowRays, this.showRays && (!state.design || state.design.kind === 'legacy') ? 1 : 0);
     gl.uniform2f(u.uFieldWindow, this.shown?.halfX ?? 1, this.shown?.halfV ?? 1);

@@ -1,11 +1,11 @@
-import { getBeamDeflectorPhase, getMetalensTargetPhase, getVortexBeamPhase } from './phaseProfiles';
+import { getAxiconTargetPhase, getBeamDeflectorPhase, getMetalensTargetPhase, getVortexBeamPhase } from './phaseProfiles';
 import { generateTargetBitmap, sampleHologramPhase } from './gerchbergSaxton';
 import { FIN_CELL_TABLE as TABLE } from './finCellTable';
 import { finJones, type Complex } from './polarization';
 
 export interface PhaseProfile {
-  lens: boolean; deflect: boolean; vortex: boolean; hologram: boolean;
-  focalLength: number; deflectionAngle: number; topologicalCharge: number;
+  lens: boolean; deflect: boolean; vortex: boolean; axicon: boolean; hologram: boolean;
+  focalLength: number; deflectionAngle: number; topologicalCharge: number; axiconNA: number;
   hologramTarget: 'crest' | 'smiley' | 'mu'; hologramIterations: number; cghPhaseMask: number[][] | null;
 }
 export type DeviceDesign = { kind: 'legacy' } | { kind: 'orthogonal'; basis: { psi: number; chi: number }; profiles: [PhaseProfile, PhaseProfile] } | { kind: 'hybrid'; profiles: [PhaseProfile, PhaseProfile] };
@@ -32,7 +32,7 @@ export function defaultHybridDesign(): Extract<DeviceDesign, { kind: 'hybrid' }>
   return { kind: 'hybrid', profiles: [defaultProfile({ lens: true, focalLength: 25 }), defaultProfile({ vortex: true, topologicalCharge: 1 })] };
 }
 function defaultProfile(changes: Partial<PhaseProfile>): PhaseProfile {
-  return { lens: false, deflect: false, vortex: false, hologram: false, focalLength: 25, deflectionAngle: 0, topologicalCharge: 1, hologramTarget: 'crest', hologramIterations: 20, cghPhaseMask: null, ...changes };
+  return { lens: false, deflect: false, vortex: false, axicon: false, hologram: false, focalLength: 25, deflectionAngle: 0, topologicalCharge: 1, axiconNA: 0.35, hologramTarget: 'crest', hologramIterations: 20, cghPhaseMask: null, ...changes };
 }
 
 /** Sum the enabled scalar phase mechanisms. Coordinates and wavelength are in µm. */
@@ -41,6 +41,7 @@ export function profilePhase(profile: PhaseProfile, x: number, y: number, design
   if (profile.lens) p += getMetalensTargetPhase(x, y, designWavelength, profile.focalLength);
   if (profile.deflect) p += getBeamDeflectorPhase(x, designWavelength, profile.deflectionAngle);
   if (profile.vortex) p += getVortexBeamPhase(x, y, profile.topologicalCharge);
+  if (profile.axicon) p += getAxiconTargetPhase(x, y, designWavelength, profile.axiconNA);
   if (profile.hologram) {
     if (profile.cghPhaseMask?.length) p += sampleHologramPhase(profile.cghPhaseMask, x, y, diameter);
     else p += 0;

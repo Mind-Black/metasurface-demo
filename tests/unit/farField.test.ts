@@ -51,4 +51,24 @@ describe('computeFarField', () => {
     const r = computeFarField({ ...base, vortex: true }, 65, 0.0625);
     expect(r.intensity[32 * 65 + 32]).toBeLessThan(0.02);
   });
+
+  it('axicon forms a far-field annular ring at sin(theta) ≈ NA with a suppressed centre', () => {
+    const na = 0.35;
+    const size = 129;
+    const sinMax = 0.6;
+    const r = computeFarField({ ...base, axicon: true, axiconNA: na }, size, sinMax);
+    const mid = (size - 1) / 2;
+    // Finite-aperture + pillar zero-order leakage leaves a weak centre (< 15% of ring peak).
+    expect(r.intensity[mid * size + mid]).toBeLessThan(0.15);
+    const idx = peakIndex(r.intensity);
+    const row = Math.floor(idx / size);
+    const col = idx % size;
+    const sx = -sinMax + ((col + 0.5) / size) * 2 * sinMax;
+    const sy = sinMax - ((row + 0.5) / size) * 2 * sinMax;
+    expect(Math.hypot(sx, sy)).toBeCloseTo(na, 1);
+    const ringOffset = Math.round((na / sinMax) * (size / 2));
+    for (const [dr, dc] of [[0, ringOffset], [0, -ringOffset], [ringOffset, 0], [-ringOffset, 0]]) {
+      expect(r.intensity[(mid + dr) * size + (mid + dc)]).toBeGreaterThan(0.5);
+    }
+  });
 });

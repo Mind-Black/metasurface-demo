@@ -32,6 +32,7 @@ export function deviceFromState(state: OpticsState): FarFieldInput {
     diameter: state.diameter,
     deflectionAngle: state.deflectionAngle,
     topologicalCharge: state.topologicalCharge,
+    axiconNA: state.axiconNA,
     ...gradients,
     mechanism: state.phaseMechanism,
     stokes: state.stokes,

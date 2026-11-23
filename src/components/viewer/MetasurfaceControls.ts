@@ -82,7 +82,7 @@ export class MetasurfaceControls {
       if (field === 'deflectionAngle' && typeof value === 'number') value = rad(value);
       if (typeof value === 'number') {
         const bounds: Record<string, [number, number, number?]> = {
-          focalLength: [1, 100], deflectionAngle: [rad(-60), rad(60)], topologicalCharge: [-10, 10, 1], hologramIterations: [1, 500, 1],
+          focalLength: [1, 100], deflectionAngle: [rad(-60), rad(60)], topologicalCharge: [-10, 10, 1], axiconNA: [-0.85, 0.85], hologramIterations: [1, 500, 1],
         };
         const [min, max, step] = bounds[field] ?? [-Infinity, Infinity];
         value = Math.max(min, Math.min(max, value));
@@ -119,9 +119,9 @@ export class MetasurfaceControls {
     const profiles = design.kind === 'legacy' ? [] : design.profiles;
     const supportMessage = librarySupport(state.designWavelength, state.wavelength, state.material, state.pitchNm, state.heightNm);
     const modelDescription = kind === 'hybrid'
-      ? 'Set a dynamic phase profile and an independent PB geometric phase profile for circular output. RCP → LCP receives D + ΦPB + π/2; LCP → RCP receives D − ΦPB + π/2. Here θ = ΦPB/2; both conversions share the same π/2 offset.'
+      ? 'Set a dynamic phase profile and an independent PB geometric phase profile (combining lens, deflect, vortex, axicon, and hologram) for circular output. RCP → LCP receives D + ΦPB + π/2; LCP → RCP receives D − ΦPB + π/2 (inverting PB profiles such as focusing lenses, vortex charges, and axicon cones). Here θ = ΦPB/2; both conversions share the same π/2 offset.'
       : kind === 'orthogonal'
-        ? 'Set two independent phase profiles on a design input-polarization basis; the output components obey conjugate constraints.'
+        ? 'Set two independent phase profiles (combining lens, deflect, vortex, axicon, and hologram) on a design input-polarization basis; the output components obey conjugate constraints.'
         : 'Choose a two-function design architecture.';
     const opticsSignature = `${designKey(design)}|${state.responseModel}|${state.designWavelength}|${state.wavelength}|${state.diameter}|${state.material}|${state.pitchNm}|${state.heightNm}|${state.stokes.join(',')}|${state.analyzer}`;
     const geometrySignature = `${designKey(design)}|${state.designWavelength}|${state.material}|${state.pitchNm}|${state.heightNm}|${state.phaseMapChannel}|${state.responseModel}`;
@@ -186,8 +186,8 @@ export class MetasurfaceControls {
     const number = (key: keyof PhaseProfile, label: string, value: number, min: number, max: number, step: number, unit: string) => `<label class="profile-number">${label}<span><input type="number" data-profile-index="${index}" data-profile-field="${key}" value="${value}" min="${min}" max="${max}" step="${step}"><small>${unit}</small></span></label>`;
     const hologram = profile.hologram ? `<div class="profile-extra"><label class="profile-number">Target<select data-profile-index="${index}" data-profile-field="hologramTarget"><option value="crest" ${profile.hologramTarget === 'crest' ? 'selected' : ''}>Crest</option><option value="smiley" ${profile.hologramTarget === 'smiley' ? 'selected' : ''}>Smiley</option><option value="mu" ${profile.hologramTarget === 'mu' ? 'selected' : ''}>μ</option></select></label>${number('hologramIterations','Iterations',profile.hologramIterations,1,500,1,'')}</div>` : '';
     return `<article class="metasurface-profile-card"><header><h4>${title}</h4><span>Profile ${index+1}</span></header>
-      <div class="profile-functions">${check('lens','Lens','Add a focusing phase profile.')}${check('deflect','Deflect','Add a linear phase ramp to steer the beam.')}${check('vortex','Vortex','Add an orbital angular momentum phase profile.')}${check('hologram','Hologram','Add an iterative phase-only hologram.')}</div>
-      <div class="profile-parameters">${number('focalLength','Focal length',profile.focalLength,1,100,0.5,'µm')}${number('deflectionAngle','Deflection angle',deg(profile.deflectionAngle),-60,60,1,'°')}${number('topologicalCharge','Topological charge',profile.topologicalCharge,-10,10,1,'ℓ')}</div>
+      <div class="profile-functions">${check('lens','Lens','Add a focusing phase profile.')}${check('deflect','Deflect','Add a linear phase ramp to steer the beam.')}${check('vortex','Vortex','Add an orbital angular momentum phase profile.')}${check('axicon','Axicon','Add a conical radial phase profile for Bessel-beam generation.')}${check('hologram','Hologram','Add an iterative phase-only hologram.')}</div>
+      <div class="profile-parameters">${number('focalLength','Focal length',profile.focalLength,1,100,0.5,'µm')}${number('deflectionAngle','Deflection angle',deg(profile.deflectionAngle),-60,60,1,'°')}${number('topologicalCharge','Topological charge',profile.topologicalCharge,-10,10,1,'ℓ')}${number('axiconNA','Axicon NA',profile.axiconNA,-0.85,0.85,0.05,'')}</div>
       ${hologram}</article>`;
   }
 }

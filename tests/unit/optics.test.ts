@@ -4,10 +4,14 @@ import {
   getMetalensTargetPhase,
   getBeamDeflectorPhase,
   getVortexBeamPhase,
+  getAxiconTargetPhase,
   calculateNumericalAperture,
   calculateAbbeLimit,
   calculateChromaticFocalShift,
   calculateDeflectionAngle,
+  calculateAxiconDepthOfFocus,
+  calculateBesselSpotFWHM,
+  calculateAxiconPeriod,
   getPBRotationAngle,
   getDemonstrationIntensityScale,
   formatIntensityValue
@@ -223,6 +227,57 @@ describe('Dynamic Intensity Range Scaling Across Demonstrations', () => {
     expect(formatIntensityValue(4.607)).toBe('4.61');
     expect(formatIntensityValue(0.1154)).toBe('0.115');
     expect(formatIntensityValue(0.00578)).toBe('0.0058');
+  });
+});
+
+describe('Benchmark 6: Axicon Phase Profile & Bessel Beam Mechanics', () => {
+  it('produces a radially linear, azimuthally symmetric conical phase profile', () => {
+    const lambda = 0.532;
+    const na = 0.35;
+    const period = calculateAxiconPeriod(lambda, na); // 1.52 um
+    expect(period).toBeCloseTo(1.52, 4);
+    expect(calculateAxiconPeriod(lambda, 0)).toBe(Infinity);
+
+    // Center r = 0 has zero phase
+    expect(getAxiconTargetPhase(0, 0, lambda, na)).toBeCloseTo(0, 8);
+
+    // Circular symmetry across quadrants
+    const p1 = getAxiconTargetPhase(3, 4, lambda, na);
+    expect(getAxiconTargetPhase(-4, 3, lambda, na)).toBeCloseTo(p1, 8);
+    expect(getAxiconTargetPhase(-3, -4, lambda, na)).toBeCloseTo(p1, 8);
+    expect(getAxiconTargetPhase(5, 0, lambda, na)).toBeCloseTo(p1, 8);
+
+    // One radial period wraps by 2pi; half period shifts by pi
+    expect(Math.sin(getAxiconTargetPhase(period, 0, lambda, na))).toBeCloseTo(0, 8);
+    expect(Math.cos(getAxiconTargetPhase(period, 0, lambda, na))).toBeCloseTo(1, 8);
+    expect(getAxiconTargetPhase(period / 2, 0, lambda, na)).toBeCloseTo(Math.PI, 8);
+
+    // Negative NA flips phase sign modulo 2pi
+    const pos = getAxiconTargetPhase(2.3, 1.1, lambda, na);
+    const neg = getAxiconTargetPhase(2.3, 1.1, lambda, -na);
+    expect((pos + neg) % (2 * Math.PI)).toBeCloseTo(0, 8);
+  });
+
+  it('computes Bessel-zone depth of focus, chromatic shift, evanescent cutoff, and core FWHM', () => {
+    const zMax532 = calculateAxiconDepthOfFocus(30, 0.532, 0.532, 0.35);
+    expect(zMax532).toBeCloseTo(40.146, 2);
+
+    // Longer operational wavelength increases cone angle -> shorter Bessel zone
+    const zMax650 = calculateAxiconDepthOfFocus(30, 0.532, 0.650, 0.35);
+    expect(zMax650).toBeLessThan(zMax532);
+    expect(zMax650).toBeGreaterThan(25);
+
+    // Diverging or flat axicon has no converging Bessel zone
+    expect(calculateAxiconDepthOfFocus(30, 0.532, 0.532, -0.35)).toBe(0);
+    expect(calculateAxiconDepthOfFocus(30, 0.532, 0.532, 0)).toBe(0);
+
+    // Supercritical wavelength (sin(theta) >= 1) is evanescent -> NaN
+    expect(Number.isNaN(calculateAxiconDepthOfFocus(30, 0.532, 1.55, 0.5))).toBe(true);
+
+    // Bessel central lobe FWHM ~ 0.3585 * lambda0 / |NA|
+    const fwhm = calculateBesselSpotFWHM(0.532, 0.35);
+    expect(fwhm * 1000).toBeCloseTo(545, 0);
+    expect(calculateBesselSpotFWHM(0.532, 0)).toBe(Infinity);
   });
 });
 

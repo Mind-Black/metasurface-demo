@@ -3,7 +3,16 @@ import { WavefieldRenderer } from './WavefieldCanvas';
 import { NanostructureLatticeViewer } from './NanostructureLattice';
 import { XYProfileRenderer } from './XYProfileCanvas';
 import { FarFieldRenderer } from './FarFieldCanvas';
-import { getDemonstrationIntensityScale, formatIntensityValue, IntensityScaleRange, calculateDeflectionAngle, calculateChromaticFocalShift } from '@/lib/optics/phaseProfiles';
+import {
+  getDemonstrationIntensityScale,
+  formatIntensityValue,
+  IntensityScaleRange,
+  calculateDeflectionAngle,
+  calculateChromaticFocalShift,
+  calculateAxiconDepthOfFocus,
+  calculateBesselSpotFWHM,
+  calculateAxiconPeriod,
+} from '@/lib/optics/phaseProfiles';
 import { deviceFromState, fieldClient } from '@/lib/optics/fieldClient';
 import { pbResponse } from '@/lib/optics/finLut';
 import { Analyzer, cabs2, ellipseFromStokes, jonesFromStokes, PhaseMechanism, Stokes, stokesFromEllipse } from '@/lib/optics/polarization';
@@ -325,6 +334,9 @@ export class DualViewport {
               <button type="button" class="gradient-toggle-btn" data-gradient="vortex">
                 <span class="grad-check">+</span> Optical Vortex <span class="math-tex">(\Phi_{\text{vortex}})</span>
               </button>
+              <button type="button" class="gradient-toggle-btn" data-gradient="axicon">
+                <span class="grad-check">+</span> Axicon <span class="math-tex">(\Phi_{\text{axicon}})</span>
+              </button>
               <button type="button" class="gradient-toggle-btn" data-gradient="hologram">
                 <span class="grad-check">+</span> CGH Hologram <span class="math-tex">(\Phi_{\text{holo}})</span>
               </button>
@@ -336,11 +348,14 @@ export class DualViewport {
               <button type="button" class="gradient-preset-chip active" data-preset="single-lens">Metalens</button>
               <button type="button" class="gradient-preset-chip" data-preset="single-deflect">Deflector</button>
               <button type="button" class="gradient-preset-chip" data-preset="single-vortex">Vortex Singlet</button>
+              <button type="button" class="gradient-preset-chip" data-preset="single-axicon">Axicon</button>
               <button type="button" class="gradient-preset-chip" data-preset="single-hologram">Hologram</button>
               <button type="button" class="gradient-preset-chip" data-preset="offaxis-lens">Off-Axis Metalens (Lens + Deflect)</button>
               <button type="button" class="gradient-preset-chip" data-preset="focused-vortex">Focused Vortex (Lens + OAM)</button>
               <button type="button" class="gradient-preset-chip" data-preset="steered-vortex">Steered Vortex (Deflect + OAM)</button>
               <button type="button" class="gradient-preset-chip" data-preset="offaxis-vortex">Off-Axis Vortex (Lens + Deflect + OAM)</button>
+              <button type="button" class="gradient-preset-chip" data-preset="bessel-vortex">Higher-Order Bessel (Axicon + OAM)</button>
+              <button type="button" class="gradient-preset-chip" data-preset="ring-focus">Ring Focus (Lens + Axicon)</button>
             </div>
           </div>
 
@@ -592,7 +607,62 @@ export class DualViewport {
             </div>
           </div>
 
-          <!-- 4. Hologram Mode Controls -->
+          <!-- 4. Axicon Mode Controls -->
+          <div class="demo-mode-panel hidden" id="demo-controls-axicon">
+            <div class="demo-controls-grid">
+              <div class="demo-control-group">
+                <div class="demo-control-label-row">
+                  <label for="demo-slider-axicon-na" class="demo-label">
+                    <span>Design Axicon NA (<span class="math-tex">\text{NA}_0 = \sin\theta_{a,0}</span>):</span>
+                  </label>
+                  <span id="demo-label-axicon-na" class="demo-val">+0.35</span>
+                </div>
+                <input
+                  type="range"
+                  id="demo-slider-axicon-na"
+                  class="demo-slider-input"
+                  min="-0.85"
+                  max="0.85"
+                  step="0.01"
+                  value="0.35"
+                  aria-label="Demonstration Axicon Numerical Aperture"
+                />
+                <div class="demo-helper-note" id="demo-axicon-info"></div>
+                <div class="demo-presets-row">
+                  <button type="button" class="demo-chip" data-demo-axicon-na="-0.35">-0.35 (Diverging)</button>
+                  <button type="button" class="demo-chip" data-demo-axicon-na="0.20">0.20</button>
+                  <button type="button" class="demo-chip active" data-demo-axicon-na="0.35">0.35</button>
+                  <button type="button" class="demo-chip" data-demo-axicon-na="0.50">0.50</button>
+                  <button type="button" class="demo-chip" data-demo-axicon-na="0.70">0.70</button>
+                </div>
+              </div>
+
+              <div class="demo-control-group">
+                <div class="demo-control-label-row">
+                  <label for="demo-slider-axicon-angle" class="demo-label">
+                    <span>Cone Half-Angle (<span class="math-tex">\theta_{a,0}</span>):</span>
+                  </label>
+                  <span id="demo-label-axicon-angle" class="demo-val">+20.5°</span>
+                </div>
+                <input
+                  type="range"
+                  id="demo-slider-axicon-angle"
+                  class="demo-slider-input"
+                  min="-58.2"
+                  max="58.2"
+                  step="0.5"
+                  value="20.5"
+                  aria-label="Demonstration Axicon Cone Half-Angle"
+                />
+                <div class="demo-helper-note">
+                  <span class="math-tex">\Phi_{\text{axicon}}(r) = -k_0 r \, \text{NA}_0</span> · <span id="demo-axicon-period">Λᵣ = 1.52 µm</span>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- 5. Hologram Mode Controls -->
           <div class="demo-mode-panel hidden" id="demo-controls-hologram">
             <div class="demo-controls-grid">
               <div class="demo-control-group">
@@ -890,21 +960,27 @@ export class DualViewport {
       chip.addEventListener('click', () => {
         const preset = chip.dataset.preset;
         if (preset === 'single-lens') {
-          opticsStore.getState().setActiveGradients({ lens: true, deflect: false, vortex: false, hologram: false });
+          opticsStore.getState().setActiveGradients({ lens: true, deflect: false, vortex: false, axicon: false, hologram: false });
         } else if (preset === 'single-deflect') {
-          opticsStore.getState().setActiveGradients({ lens: false, deflect: true, vortex: false, hologram: false });
+          opticsStore.getState().setActiveGradients({ lens: false, deflect: true, vortex: false, axicon: false, hologram: false });
         } else if (preset === 'single-vortex') {
-          opticsStore.getState().setActiveGradients({ lens: false, deflect: false, vortex: true, hologram: false });
+          opticsStore.getState().setActiveGradients({ lens: false, deflect: false, vortex: true, axicon: false, hologram: false });
+        } else if (preset === 'single-axicon') {
+          opticsStore.getState().setActiveGradients({ lens: false, deflect: false, vortex: false, axicon: true, hologram: false });
         } else if (preset === 'single-hologram') {
-          opticsStore.getState().setActiveGradients({ lens: false, deflect: false, vortex: false, hologram: true });
+          opticsStore.getState().setActiveGradients({ lens: false, deflect: false, vortex: false, axicon: false, hologram: true });
         } else if (preset === 'offaxis-lens') {
-          opticsStore.getState().setActiveGradients({ lens: true, deflect: true, vortex: false, hologram: false });
+          opticsStore.getState().setActiveGradients({ lens: true, deflect: true, vortex: false, axicon: false, hologram: false });
         } else if (preset === 'focused-vortex') {
-          opticsStore.getState().setActiveGradients({ lens: true, deflect: false, vortex: true, hologram: false });
+          opticsStore.getState().setActiveGradients({ lens: true, deflect: false, vortex: true, axicon: false, hologram: false });
         } else if (preset === 'steered-vortex') {
-          opticsStore.getState().setActiveGradients({ lens: false, deflect: true, vortex: true, hologram: false });
+          opticsStore.getState().setActiveGradients({ lens: false, deflect: true, vortex: true, axicon: false, hologram: false });
         } else if (preset === 'offaxis-vortex') {
-          opticsStore.getState().setActiveGradients({ lens: true, deflect: true, vortex: true, hologram: false });
+          opticsStore.getState().setActiveGradients({ lens: true, deflect: true, vortex: true, axicon: false, hologram: false });
+        } else if (preset === 'bessel-vortex') {
+          opticsStore.getState().setActiveGradients({ lens: false, deflect: false, vortex: true, axicon: true, hologram: false });
+        } else if (preset === 'ring-focus') {
+          opticsStore.getState().setActiveGradients({ lens: true, deflect: false, vortex: false, axicon: true, hologram: false });
         }
       });
     });
@@ -930,7 +1006,13 @@ export class DualViewport {
         } else if (target === 'focal') {
           const state = opticsStore.getState();
           const paraxial = calculateChromaticFocalShift(state.designWavelength, state.wavelength, state.focalLength).operationalFocalLength;
-          opticsStore.getState().setProbeZ(Math.min(60, this.focusZ ?? (state.design.kind === 'legacy' ? paraxial : state.probeZ)));
+          const legacyFallback = state.activeGradients.axicon && !state.activeGradients.lens
+            ? (() => {
+              const zMax = calculateAxiconDepthOfFocus(state.diameter, state.designWavelength, state.wavelength, state.axiconNA);
+              return Number.isFinite(zMax) && zMax > 0 ? Math.min(60, zMax / 2) : state.probeZ;
+            })()
+            : paraxial;
+          opticsStore.getState().setProbeZ(Math.min(60, this.focusZ ?? (state.design.kind === 'legacy' ? legacyFallback : state.probeZ)));
         } else if (target === '50') {
           opticsStore.getState().setProbeZ(50.0);
         }
@@ -1076,6 +1158,40 @@ export class DualViewport {
       });
     });
 
+    // Axicon controls
+    const demoAxiconNaSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-axicon-na');
+    const demoAxiconAngleSlider = this.container.querySelector<HTMLInputElement>('#demo-slider-axicon-angle');
+    const demoAxiconNaChips = this.container.querySelectorAll<HTMLButtonElement>('[data-demo-axicon-na]');
+
+    demoAxiconNaSlider?.addEventListener('input', () => {
+      const na = parseFloat(demoAxiconNaSlider.value);
+      if (!isNaN(na)) {
+        opticsStore.getState().setAxiconNA(na);
+        if (demoAxiconAngleSlider) {
+          const deg = (Math.asin(Math.max(-0.85, Math.min(0.85, na))) * 180) / Math.PI;
+          demoAxiconAngleSlider.value = deg.toFixed(1);
+        }
+      }
+    });
+
+    demoAxiconAngleSlider?.addEventListener('input', () => {
+      const deg = parseFloat(demoAxiconAngleSlider.value);
+      if (!isNaN(deg)) {
+        const na = Math.max(-0.85, Math.min(0.85, Math.sin((deg * Math.PI) / 180)));
+        opticsStore.getState().setAxiconNA(na);
+        if (demoAxiconNaSlider) {
+          demoAxiconNaSlider.value = na.toFixed(2);
+        }
+      }
+    });
+
+    demoAxiconNaChips.forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const na = parseFloat(chip.dataset.demoAxiconNa || '0.35');
+        if (!isNaN(na)) opticsStore.getState().setAxiconNA(na);
+      });
+    });
+
     // Hologram controls
     const demoCghBtns = this.container.querySelectorAll<HTMLButtonElement>('[data-demo-cgh]');
     const demoHoloIterations = this.container.querySelector<HTMLInputElement>('#demo-slider-holo-iterations');
@@ -1143,7 +1259,7 @@ export class DualViewport {
       snapChips.forEach(chip => { if (chip.dataset.snapZ === 'focal' && state.design.kind !== 'legacy') chip.disabled = true; });
       fieldClient.request({ kind: 'overview', device: deviceFromState(state), halfX: 30, halfV: 60, nx: 256, nv: 128 }, ({ field }) => {
         if (!field) return;
-        this.focusZ = state.design.kind !== 'legacy' || state.activeGradients.lens ? field.peakV : null;
+        this.focusZ = state.design.kind !== 'legacy' || state.activeGradients.lens || state.activeGradients.axicon ? field.peakV : null;
         applyScaleRange(getDemonstrationIntensityScale(field.peak), preserveRelative);
       });
     };
@@ -1238,7 +1354,7 @@ export class DualViewport {
       const mechanismNote = this.container.querySelector('#pol-mechanism-note');
       if (mechanismNote) {
         mechanismNote.textContent = pb
-          ? 'Identical TiO₂ nanofins, each rotated by θ = φ/2. RCP in → LCP out carries +φ (the designed device); LCP in → RCP out carries −φ (a diverging lens, mirrored deflection, ℓ → −ℓ, the twin hologram). The unconverted part keeps its polarization and gets no phase profile.'
+          ? 'Identical TiO₂ nanofins, each rotated by θ = φ/2. RCP in → LCP out carries +φ (the designed device); LCP in → RCP out carries −φ (a diverging lens, mirrored deflection, ℓ → −ℓ, a diverging axicon, the twin hologram). The unconverted part keeps its polarization and gets no phase profile.'
           : 'Circular TiO₂ pillars are isotropic: the phase delay depends on diameter only, and the transmitted polarization equals the input.';
       }
       const finReadout = this.container.querySelector('#pol-fin-readout');
@@ -1280,6 +1396,7 @@ export class DualViewport {
         lens: state.deviceType === 'metalens',
         deflect: state.deviceType === 'deflector',
         vortex: state.deviceType === 'vortex',
+        axicon: state.deviceType === 'axicon',
         hologram: state.deviceType === 'hologram',
       };
 
@@ -1296,14 +1413,17 @@ export class DualViewport {
       presetChips.forEach((chip) => {
         const preset = chip.dataset.preset;
         const isMatch =
-          (preset === 'single-lens' && ag.lens && !ag.deflect && !ag.vortex && !ag.hologram) ||
-          (preset === 'single-deflect' && !ag.lens && ag.deflect && !ag.vortex && !ag.hologram) ||
-          (preset === 'single-vortex' && !ag.lens && !ag.deflect && ag.vortex && !ag.hologram) ||
-          (preset === 'single-hologram' && !ag.lens && !ag.deflect && !ag.vortex && ag.hologram) ||
-          (preset === 'offaxis-lens' && ag.lens && ag.deflect && !ag.vortex && !ag.hologram) ||
-          (preset === 'focused-vortex' && ag.lens && !ag.deflect && ag.vortex && !ag.hologram) ||
-          (preset === 'steered-vortex' && !ag.lens && ag.deflect && ag.vortex && !ag.hologram) ||
-          (preset === 'offaxis-vortex' && ag.lens && ag.deflect && ag.vortex && !ag.hologram);
+          (preset === 'single-lens' && ag.lens && !ag.deflect && !ag.vortex && !ag.axicon && !ag.hologram) ||
+          (preset === 'single-deflect' && !ag.lens && ag.deflect && !ag.vortex && !ag.axicon && !ag.hologram) ||
+          (preset === 'single-vortex' && !ag.lens && !ag.deflect && ag.vortex && !ag.axicon && !ag.hologram) ||
+          (preset === 'single-axicon' && !ag.lens && !ag.deflect && !ag.vortex && ag.axicon && !ag.hologram) ||
+          (preset === 'single-hologram' && !ag.lens && !ag.deflect && !ag.vortex && !ag.axicon && ag.hologram) ||
+          (preset === 'offaxis-lens' && ag.lens && ag.deflect && !ag.vortex && !ag.axicon && !ag.hologram) ||
+          (preset === 'focused-vortex' && ag.lens && !ag.deflect && ag.vortex && !ag.axicon && !ag.hologram) ||
+          (preset === 'steered-vortex' && !ag.lens && ag.deflect && ag.vortex && !ag.axicon && !ag.hologram) ||
+          (preset === 'offaxis-vortex' && ag.lens && ag.deflect && ag.vortex && !ag.axicon && !ag.hologram) ||
+          (preset === 'bessel-vortex' && !ag.lens && !ag.deflect && ag.vortex && ag.axicon && !ag.hologram) ||
+          (preset === 'ring-focus' && ag.lens && !ag.deflect && !ag.vortex && ag.axicon && !ag.hologram);
         chip.classList.toggle('active', Boolean(isMatch));
       });
 
@@ -1312,11 +1432,13 @@ export class DualViewport {
         metalens: this.container.querySelector('#demo-controls-metalens'),
         deflector: this.container.querySelector('#demo-controls-deflector'),
         vortex: this.container.querySelector('#demo-controls-vortex'),
+        axicon: this.container.querySelector('#demo-controls-axicon'),
         hologram: this.container.querySelector('#demo-controls-hologram'),
       };
       modePanels.metalens?.classList.toggle('hidden', !ag.lens && state.deviceType !== 'metalens');
       modePanels.deflector?.classList.toggle('hidden', !ag.deflect && state.deviceType !== 'deflector');
       modePanels.vortex?.classList.toggle('hidden', !ag.vortex && state.deviceType !== 'vortex');
+      modePanels.axicon?.classList.toggle('hidden', !ag.axicon && state.deviceType !== 'axicon');
       modePanels.hologram?.classList.toggle('hidden', !ag.hologram && state.deviceType !== 'hologram');
 
       const modeTag = this.container.querySelector('#demo-mode-tag');
@@ -1325,12 +1447,14 @@ export class DualViewport {
           metalens: 'Metalens Parameters',
           deflector: 'Beam Deflector Parameters',
           vortex: 'Optical Vortex Parameters',
+          axicon: 'Axicon Parameters',
           hologram: 'Hologram Parameters',
         };
         const activeNames: string[] = [];
         if (ag.lens) activeNames.push('Lens');
         if (ag.deflect) activeNames.push('Deflector');
         if (ag.vortex) activeNames.push('Vortex');
+        if (ag.axicon) activeNames.push('Axicon');
         if (ag.hologram) activeNames.push('Hologram');
 
         modeTag.textContent = activeNames.length > 1
@@ -1471,6 +1595,48 @@ export class DualViewport {
 
 
 
+      // Sync Axicon controls
+      const axNa = state.axiconNA;
+      const axDeg = (Math.asin(Math.max(-1, Math.min(1, axNa))) * 180) / Math.PI;
+      const labelDemoAxiconNa = this.container.querySelector('#demo-label-axicon-na');
+      if (labelDemoAxiconNa) labelDemoAxiconNa.textContent = `${axNa >= 0 ? '+' : ''}${axNa.toFixed(2)}`;
+      if (demoAxiconNaSlider && document.activeElement !== demoAxiconNaSlider) {
+        demoAxiconNaSlider.value = axNa.toFixed(2);
+      }
+      const labelDemoAxiconAngle = this.container.querySelector('#demo-label-axicon-angle');
+      if (labelDemoAxiconAngle) labelDemoAxiconAngle.textContent = `${axDeg >= 0 ? '+' : ''}${axDeg.toFixed(1)}°`;
+      if (demoAxiconAngleSlider && document.activeElement !== demoAxiconAngleSlider) {
+        demoAxiconAngleSlider.value = axDeg.toFixed(1);
+      }
+      const axiconPeriodEl = this.container.querySelector('#demo-axicon-period');
+      if (axiconPeriodEl) {
+        axiconPeriodEl.textContent = Math.abs(axNa) < 1e-4
+          ? 'Flat (Λᵣ = ∞)'
+          : `Λᵣ = ${calculateAxiconPeriod(state.designWavelength, axNa).toFixed(2)} µm`;
+      }
+      const axiconInfoEl = this.container.querySelector('#demo-axicon-info');
+      if (axiconInfoEl) {
+        const nm = (state.wavelength * 1000).toFixed(0);
+        const opSin = (state.wavelength / state.designWavelength) * axNa;
+        if (Math.abs(axNa) < 1e-4) {
+          axiconInfoEl.textContent = 'NA = 0: flat phase (no conical refraction)';
+        } else if (Math.abs(opSin) >= 1) {
+          axiconInfoEl.textContent = `At ${nm} nm this conical order is evanescent (|sin θ| ≥ 1), so it carries no power`;
+        } else if (axNa > 0) {
+          const opDeg = (Math.asin(opSin) * 180) / Math.PI;
+          const zMax = calculateAxiconDepthOfFocus(state.diameter, state.designWavelength, state.wavelength, axNa);
+          const fwhmNm = calculateBesselSpotFWHM(state.designWavelength, axNa) * 1000;
+          axiconInfoEl.textContent = `At ${nm} nm: θ = ${opDeg.toFixed(1)}°, Bessel zone z_max ≈ ${zMax.toFixed(1)} µm, core FWHM ≈ ${fwhmNm.toFixed(0)} nm`;
+        } else {
+          const opDeg = (Math.asin(Math.abs(opSin)) * 180) / Math.PI;
+          axiconInfoEl.textContent = `Diverging cone at ${nm} nm (θ = −${opDeg.toFixed(1)}°): expanding hollow ring, no on-axis Bessel zone`;
+        }
+      }
+      demoAxiconNaChips.forEach((chip) => {
+        const val = parseFloat(chip.dataset.demoAxiconNa || '0');
+        chip.classList.toggle('active', Math.abs(axNa - val) < 0.005);
+      });
+
       // Sync Hologram controls
       demoCghBtns.forEach((b) => {
         const selected = b.dataset.demoCgh === state.hologramTarget;
@@ -1489,7 +1655,7 @@ export class DualViewport {
 
 
       // Check if demonstration or optical parameters changed
-      const demonstrationKey = `${state.deviceType}_${ag.lens}_${ag.deflect}_${ag.vortex}_${ag.hologram}_${state.wavelength}_${state.designWavelength}_${state.focalLength}_${state.diameter}_${state.deflectionAngle}_${state.topologicalCharge}_${state.hologramTarget}_${state.hologramIterations}_${Boolean(state.cghPhaseMask)}_${state.phaseMechanism}_${state.stokes.join(',')}_${state.analyzer}_${designKey(state.design)}_${state.responseModel}_${state.phaseMapChannel}`;
+      const demonstrationKey = `${state.deviceType}_${ag.lens}_${ag.deflect}_${ag.vortex}_${ag.axicon}_${ag.hologram}_${state.wavelength}_${state.designWavelength}_${state.focalLength}_${state.diameter}_${state.deflectionAngle}_${state.topologicalCharge}_${state.axiconNA}_${state.hologramTarget}_${state.hologramIterations}_${Boolean(state.cghPhaseMask)}_${state.phaseMechanism}_${state.stokes.join(',')}_${state.analyzer}_${designKey(state.design)}_${state.responseModel}_${state.phaseMapChannel}`;
       if (demonstrationKey !== lastDemonstrationKey) {
         lastDemonstrationKey = demonstrationKey;
         const deviceChanged = lastDeviceType !== state.deviceType;

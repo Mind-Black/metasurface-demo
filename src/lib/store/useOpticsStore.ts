@@ -3,7 +3,7 @@ import type { Analyzer, PhaseMechanism, Stokes } from '@/lib/optics/polarization
 import { defaultHybridDesign, defaultOrthogonalDesign } from '@/lib/optics/metasurface';
 import type { DeviceDesign, PhaseProfile, ResponseModel } from '@/lib/optics/metasurface';
 export const MAX_HOLOGRAM_ITERATIONS = 500;
-export type DeviceType = 'metalens' | 'deflector' | 'vortex' | 'hologram';
+export type DeviceType = 'metalens' | 'deflector' | 'vortex' | 'axicon' | 'hologram';
 export type MaterialType = 'TiO2' | 'Si';
 export type RenderMode = 'field' | 'intensity' | 'phase';
 
@@ -11,6 +11,7 @@ export interface ActiveGradients {
   lens: boolean;
   deflect: boolean;
   vortex: boolean;
+  axicon: boolean;
   hologram: boolean;
 }
 
@@ -29,6 +30,7 @@ export interface OpticsState {
   diameter: number;         // in micrometers (e.g. 30.0)
   deflectionAngle: number;  // in radians (e.g. 0.35 ~20 degrees)
   topologicalCharge: number;// integer (UI range: -10 to +10)
+  axiconNA: number;         // design NA = sin(theta_a), dimensionless (UI range: -0.85 to +0.85)
   deviceType: DeviceType;
   material: MaterialType;
 
@@ -76,6 +78,7 @@ export interface OpticsState {
   setDeviceType: (val: DeviceType) => void;
   setDeflectionAngle: (val: number) => void;
   setTopologicalCharge: (val: number) => void;
+  setAxiconNA: (val: number) => void;
   setMaterial: (val: MaterialType) => void;
   setRenderMode: (val: RenderMode) => void;
   setIntensityScale: (val: 'linear' | 'log') => void;
@@ -118,12 +121,14 @@ class OpticsStore {
       diameter: 30.0,
       deflectionAngle: 0.35, // ~20 degrees
       topologicalCharge: 1,
+      axiconNA: 0.35,        // ~20.5 deg cone half-angle (z_max ~40.1 um at D=30 um)
       deviceType: 'metalens',
       material: 'TiO2',
       activeGradients: {
         lens: true,
         deflect: false,
         vortex: false,
+        axicon: false,
         hologram: false
       },
       probeZ: 25.0,
@@ -163,8 +168,10 @@ class OpticsStore {
         const profiles = base.profiles.map((profile, i) => {
           if (i !== index) return profile;
           const updated = { ...profile, ...patch };
-          if (![updated.focalLength, updated.deflectionAngle, updated.topologicalCharge, updated.hologramIterations].every(Number.isFinite)
-            || updated.focalLength <= 0) throw new RangeError('Profile parameters must be finite and focal length positive.');
+          if (![updated.focalLength, updated.deflectionAngle, updated.topologicalCharge, updated.axiconNA, updated.hologramIterations].every(Number.isFinite)
+            || updated.focalLength <= 0 || Math.abs(updated.axiconNA) >= 1) {
+            throw new RangeError('Profile parameters must be finite, focal length positive, and |axicon NA| < 1.');
+          }
           updated.topologicalCharge = Math.max(-10, Math.min(10, Math.round(updated.topologicalCharge)));
           updated.hologramIterations = Math.max(1, Math.min(MAX_HOLOGRAM_ITERATIONS, Math.round(updated.hologramIterations)));
           if (patch.cghPhaseMask) {
@@ -196,6 +203,7 @@ class OpticsStore {
           lens: deviceType === 'metalens',
           deflect: deviceType === 'deflector',
           vortex: deviceType === 'vortex',
+          axicon: deviceType === 'axicon',
           hologram: deviceType === 'hologram',
         };
         this.update({ deviceType, activeGradients });
@@ -204,6 +212,7 @@ class OpticsStore {
         const activeGradients: ActiveGradients = { ...this.state.activeGradients, ...gradients };
         let dev: DeviceType = 'metalens';
         if (activeGradients.hologram) dev = 'hologram';
+        else if (activeGradients.axicon && !activeGradients.lens) dev = 'axicon';
         else if (activeGradients.vortex && !activeGradients.lens) dev = 'vortex';
         else if (activeGradients.deflect && !activeGradients.lens) dev = 'deflector';
         else dev = 'metalens';
@@ -224,6 +233,9 @@ class OpticsStore {
       setXyViewMode: (xyViewMode) => this.update({ xyViewMode }),
       setDeflectionAngle: (deflectionAngle) => this.update({ deflectionAngle }),
       setTopologicalCharge: (topologicalCharge) => this.update({ topologicalCharge }),
+      setAxiconNA: (value) => {
+        if (Number.isFinite(value)) this.update({ axiconNA: Math.max(-0.85, Math.min(0.85, value)) });
+      },
       setMaterial: (material) => {
         const designWl = material === 'Si' ? 1.55 : 0.532;
         this.update({ material, designWavelength: designWl });

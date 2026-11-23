@@ -57,6 +57,28 @@ export function getVortexBeamPhase(
 }
 
 /**
+ * Conical (linear radial) phase profile for an optical axicon generating a Bessel beam.
+ * phi(r) = -k0 * r * NA_0, where NA_0 = sin(theta_a) is the design numerical aperture.
+ * Positive NA converges rays inward toward the optical axis; negative NA diverges outward.
+ * @param x Lateral coordinate in micrometers
+ * @param y Lateral coordinate in micrometers
+ * @param wavelength Free-space design wavelength in micrometers
+ * @param axiconNA Design numerical aperture sin(theta_a) (dimensionless, |NA| < 1)
+ * @returns Wrapped phase shift in radians [0, 2pi)
+ */
+export function getAxiconTargetPhase(
+  x: number,
+  y: number,
+  wavelength: number,
+  axiconNA: number
+): number {
+  const r = Math.hypot(x, y);
+  const k0 = (2 * Math.PI) / wavelength;
+  const phase = -k0 * r * axiconNA;
+  return ((phase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+}
+
+/**
  * Pancharatnam-Berry (PB) / Geometric Phase.
  * The cross-polarized output carries phase phi = 2 * sigma * theta, where theta is the in-plane rotation
  * angle of the nanofin and sigma = +1 for RCP input, -1 for LCP input (conventions in ./polarization.ts).
@@ -112,6 +134,46 @@ export function calculateDeflectionAngle(wavelength: number, phaseGradientX: num
     return NaN; // Evanescent / momentum bound exceeded
   }
   return Math.asin(sinTheta);
+}
+
+/**
+ * Computes the geometric Bessel-zone depth of focus z_max for a converging axicon:
+ * z_max(lambda) = (D / 2) * sqrt(1 - sin^2(theta)) / sin(theta),
+ * where sin(theta) = (lambda / lambda0) * axiconNA.
+ * Returns 0 for non-converging (axiconNA <= 0) or invalid inputs, and NaN when evanescent (sin(theta) >= 1).
+ */
+export function calculateAxiconDepthOfFocus(
+  diameter: number,
+  designWavelength: number,
+  operationalWavelength: number,
+  axiconNA: number
+): number {
+  if (diameter <= 0 || designWavelength <= 0 || operationalWavelength <= 0 || axiconNA <= 0) {
+    return 0;
+  }
+  const sinTheta = (operationalWavelength / designWavelength) * axiconNA;
+  if (sinTheta >= 1.0) {
+    return NaN; // Evanescent cutoff
+  }
+  return (diameter / 2) * Math.sqrt(1 - sinTheta * sinTheta) / sinTheta;
+}
+
+/**
+ * Computes the transverse central-core FWHM of a zero-order Bessel beam J_0(k_r r),
+ * where k_r = (2pi / lambda0) * |NA_0| is wavelength-invariant for a phase-gradient axicon.
+ * |J_0(u0)|^2 = 0.5 at u0 ≈ 1.126365, giving FWHM = (u0 / pi) * (lambda0 / |NA_0|) ≈ 0.3585 * lambda0 / |NA_0|.
+ */
+export function calculateBesselSpotFWHM(designWavelength: number, axiconNA: number): number {
+  if (designWavelength <= 0 || axiconNA === 0) return Infinity;
+  return (1.126365 / Math.PI) * (designWavelength / Math.abs(axiconNA));
+}
+
+/**
+ * Computes the radial 2pi phase period of an axicon: Lambda_r = lambda0 / |NA_0|.
+ */
+export function calculateAxiconPeriod(designWavelength: number, axiconNA: number): number {
+  if (designWavelength <= 0 || axiconNA === 0) return Infinity;
+  return designWavelength / Math.abs(axiconNA);
 }
 
 export interface IntensityScaleRange {
