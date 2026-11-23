@@ -102,3 +102,18 @@ describe('Dynamic phase with polarization', () => {
     expect(b.peak).toBeCloseTo(scalar.peak, 10);
   });
 });
+
+describe('Pancharatnam-Berry axicon', () => {
+  const axicon: FarFieldInput = { ...lens, lens: false, axicon: true, axiconNA: 0.35 };
+  const pbAx = (stokes: Stokes, analyzer: FarFieldInput['analyzer'] = 'none'): FarFieldInput =>
+    ({ ...axicon, mechanism: 'pb', stokes, analyzer });
+
+  it('converges RCP input into an LCP Bessel needle while diverging LCP input', () => {
+    const rcpLcp = computeXY(pbAx(RCP, 'lcp'), 20, 4, 4, 65, 65);
+    const lcpRcp = computeXY(pbAx(LCP, 'rcp'), 20, 4, 4, 65, 65);
+    expect(Math.abs(rcpLcp.peakX)).toBeLessThan(0.2);
+    expect(Math.abs(rcpLcp.peakV)).toBeLessThan(0.2);
+    expect(rcpLcp.peak).toBeGreaterThan(10);
+    expect(lcpRcp.peak).toBeLessThan(0.15 * rcpLcp.peak);
+  });
+});

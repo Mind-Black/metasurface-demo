@@ -155,4 +155,51 @@ describe('vector metasurface propagation', () => {
     expect(totalPower).toBeGreaterThan(0);
     expect(totalPower / analyzedPower).toBeCloseTo(1, 5);
   });
+
+  it('propagates orthogonal axicon channel independently and validates axiconNA in store profiles', () => {
+    const d = defaultOrthogonalDesign();
+    d.profiles[0] = { ...d.profiles[0], lens: false, axicon: true, axiconNA: 0.35 };
+    const p = { ...base(), diameter: 16, design: d };
+    const keyBefore = vectorDeviceKey(p);
+    d.profiles[0].axiconNA = 0.45;
+    expect(vectorDeviceKey(p)).not.toBe(keyBefore);
+    d.profiles[0].axiconNA = 0.35;
+
+    p.stokes = [1, 1, 0, 0];
+    p.analyzer = 'channel1';
+    const axFar = computeFarField(p, 65, 0.6);
+    let maxIdx = 0;
+    for (let i = 1; i < axFar.intensity.length; i++) if (axFar.intensity[i] > axFar.intensity[maxIdx]) maxIdx = i;
+    const sx = -0.6 + ((maxIdx % 65 + 0.5) / 65) * 1.2;
+    const sy = 0.6 - ((Math.floor(maxIdx / 65) + 0.5) / 65) * 1.2;
+    expect(Math.hypot(sx, sy)).toBeCloseTo(0.35, 1);
+    expect(axFar.intensity[32 * 65 + 32]).toBeLessThan(0.5);
+
+    const store = opticsStore.getState();
+    store.setDesignKind('orthogonal');
+    store.setProfile(0, { axicon: true, axiconNA: 0.45 });
+    expect(() => store.setProfile(0, { axiconNA: 1.0 })).toThrow(RangeError);
+    expect(() => store.setProfile(0, { axiconNA: -1.2 })).toThrow(RangeError);
+    expect(() => store.setProfile(0, { axiconNA: Number.NaN })).toThrow(RangeError);
+    store.setDesignKind('hybrid');
+    store.setProfile(0, { axicon: true, axiconNA: 0.5 });
+    store.setProfile(1, { axicon: true, axiconNA: -0.25 });
+    store.setDesignKind('orthogonal');
+    const orthState = opticsStore.getState().design;
+    expect(orthState.kind).toBe('orthogonal');
+    if (orthState.kind === 'orthogonal') {
+      expect(orthState.profiles[0].axicon).toBe(true);
+      expect(orthState.profiles[0].axiconNA).toBe(0.45);
+    }
+    store.setDesignKind('hybrid');
+    const hybState = opticsStore.getState().design;
+    expect(hybState.kind).toBe('hybrid');
+    if (hybState.kind === 'hybrid') {
+      expect(hybState.profiles[0].axicon).toBe(true);
+      expect(hybState.profiles[0].axiconNA).toBe(0.5);
+      expect(hybState.profiles[1].axicon).toBe(true);
+      expect(hybState.profiles[1].axiconNA).toBe(-0.25);
+    }
+    store.setDesignKind('legacy');
+  });
 });

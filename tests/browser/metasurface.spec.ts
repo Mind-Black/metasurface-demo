@@ -18,14 +18,25 @@ test('desktop design modes keep their profile settings and response choice', asy
 
   await controls.locator('[data-design-kind="hybrid"]').click();
   await expect(controls).toHaveAttribute('data-design-kind', 'hybrid');
+  await expect(page.locator('#demo-controls-axicon')).toBeHidden();
   const charge = controls.locator('[data-profile-index="1"][data-profile-field="topologicalCharge"]');
   await charge.fill('3');
   await charge.dispatchEvent('input');
+  const hybAxCheck = controls.locator('[data-profile-index="0"][data-profile-field="axicon"]');
+  await hybAxCheck.check();
+  const hybAxNa = controls.locator('[data-profile-index="0"][data-profile-field="axiconNA"]');
+  await hybAxNa.fill('0.5');
+  await hybAxNa.dispatchEvent('input');
   await controls.locator('[data-design-kind="orthogonal"]').click();
   await expect(controls.locator('[data-profile-index="0"][data-profile-field="focalLength"]')).toHaveValue('31');
   await expect(controls.locator('[data-response="library"]')).toHaveAttribute('aria-pressed', 'true');
+  const orthAxCheck = controls.locator('[data-profile-index="1"][data-profile-field="axicon"]');
+  await orthAxCheck.check();
+  await expect(orthAxCheck).toBeChecked();
   await controls.locator('[data-design-kind="hybrid"]').click();
   await expect(controls.locator('[data-profile-index="1"][data-profile-field="topologicalCharge"]')).toHaveValue('3');
+  await expect(controls.locator('[data-profile-index="0"][data-profile-field="axicon"]')).toBeChecked();
+  await expect(controls.locator('[data-profile-index="0"][data-profile-field="axiconNA"]')).toHaveValue('0.5');
 
   // An all-zero/disabled profile is a valid design and must not generate non-finite UI values.
   const lens = controls.locator('[data-profile-index="0"][data-profile-field="lens"]');

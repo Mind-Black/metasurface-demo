@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { FIN_CELL_TABLE as TABLE } from '@/lib/optics/finCellTable';
 import { finJones, type Complex } from '@/lib/optics/polarization';
-import { applyJones, conjVector, defaultHybridDesign, defaultOrthogonalDesign, designBasis, designCell, designKey, finMatrix, librarySupport, projectJones, selectFin, targetJones, type JonesMatrix, type JonesVector } from '@/lib/optics/metasurface';
+import { applyJones, conjVector, defaultHybridDesign, defaultOrthogonalDesign, designBasis, designCell, designKey, finMatrix, librarySupport, profilePhase, projectJones, selectFin, targetJones, type JonesMatrix, type JonesVector } from '@/lib/optics/metasurface';
+import { getAxiconTargetPhase } from '@/lib/optics/phaseProfiles';
 
 const c = (re: number, im = 0): Complex => ({ re, im });
 const near = (a: Complex, b: Complex, eps = 1e-9) => expect(Math.hypot(a.re - b.re, a.im - b.im)).toBeLessThan(eps);
@@ -115,5 +116,33 @@ describe('polarization-resolved metasurface designs', () => {
     expect(() => finMatrix(selection, Number.NaN)).toThrow(RangeError);
     expect(() => selectFin(targetJones(defaultOrthogonalDesign(), 0, 0, 0.532, 12), 0.399)).toThrow(RangeError);
     expect(designCell(defaultOrthogonalDesign(), 0, 0, 0.532, 12, 0.532, 'ideal').matrix).toBeDefined();
+  });
+
+  it('supports axicon profiles in orthogonal and Dynamic+PB hybrid designs and hashes axicon changes', () => {
+    const orth = defaultOrthogonalDesign();
+    orth.profiles[0] = { ...orth.profiles[0], lens: false, axicon: true, axiconNA: 0.4 };
+    const x = 1.8, y = -1.2, lambda = 0.532, d = 12;
+    expect(profilePhase(orth.profiles[0], x, y, lambda, d)).toBeCloseTo(getAxiconTargetPhase(x, y, lambda, 0.4), 10);
+    const jOrth = targetJones(orth, x, y, lambda, d);
+    const outH = applyJones(jOrth, { ex: c(1), ey: c(0) });
+    const phiAx = getAxiconTargetPhase(x, y, lambda, 0.4);
+    near(outH.ex, c(Math.cos(phiAx), Math.sin(phiAx)));
+    near(outH.ey, c(0));
+
+    const k1 = designKey(orth);
+    orth.profiles[0].axiconNA = 0.55;
+    expect(designKey(orth)).not.toBe(k1);
+
+    // Hybrid Dynamic+PB: PB axicon flips sign between RCP->LCP and LCP->RCP
+    const hybrid = defaultHybridDesign();
+    hybrid.profiles[0] = { ...hybrid.profiles[0], lens: false, axicon: false };
+    hybrid.profiles[1] = { ...hybrid.profiles[1], vortex: false, axicon: true, axiconNA: 0.35 };
+    const jHyb = targetJones(hybrid, x, y, lambda, d);
+    const s = Math.SQRT1_2;
+    const rcp: JonesVector = { ex: c(s), ey: c(0, s) };
+    const lcp: JonesVector = { ex: c(s), ey: c(0, -s) };
+    const pbPhi = getAxiconTargetPhase(x, y, lambda, 0.35);
+    near(projectJones(applyJones(jHyb, rcp), lcp), c(Math.cos(pbPhi + Math.PI / 2), Math.sin(pbPhi + Math.PI / 2)));
+    near(projectJones(applyJones(jHyb, lcp), rcp), c(Math.cos(-pbPhi + Math.PI / 2), Math.sin(-pbPhi + Math.PI / 2)));
   });
 });

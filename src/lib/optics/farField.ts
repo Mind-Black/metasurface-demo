@@ -24,9 +24,11 @@ export interface FarFieldInput {
   diameter: number;          // aperture diameter [µm]
   deflectionAngle: number;   // [rad]
   topologicalCharge: number;
+  axiconNA?: number;         // design NA = sin(theta_a), dimensionless
   lens: boolean;
   deflect: boolean;
   vortex: boolean;
+  axicon?: boolean;
   hologram: boolean;
   cghPhaseMask?: number[][] | null;
   /** Bypass the pillars: unit-amplitude ideal phase at point samples of this pitch [µm]. */
@@ -88,6 +90,7 @@ export function aperturePhase(p: FarFieldInput, x: number, y: number): number {
   }
   if (p.deflect) phase += kDesign * Math.sin(p.deflectionAngle) * x;
   if (p.vortex) phase += p.topologicalCharge * Math.atan2(y, x);
+  if (p.axicon) phase += -kDesign * Math.hypot(x, y) * (p.axiconNA ?? 0);
   if (p.hologram && p.cghPhaseMask && p.cghPhaseMask.length > 0) {
     phase += sampleHologramPhase(p.cghPhaseMask, x, y, p.diameter);
   }

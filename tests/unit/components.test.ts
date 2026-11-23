@@ -195,6 +195,9 @@ describe('OpticsStore Reactive State Management', () => {
     expect(template).toContain('id="demo-controls-metalens"');
     expect(template).toContain('id="demo-controls-deflector"');
     expect(template).toContain('id="demo-controls-vortex"');
+    expect(template).toContain('id="demo-controls-axicon"');
+    expect(template).toContain('id="demo-slider-axicon-na"');
+    expect(template).toContain('id="demo-slider-axicon-angle"');
     expect(template).toContain('id="demo-controls-hologram"');
     expect(template).toContain('id="demo-slider-holo-iterations"');
     expect(template).toContain('data-demo-focal="15"');
@@ -215,11 +218,23 @@ describe('OpticsStore Reactive State Management', () => {
   });
 
   it('store combines multiple gradients and keeps at least one active', () => {
-    opticsStore.getState().setActiveGradients({ lens: true, deflect: true, vortex: false, hologram: false });
-    expect(opticsStore.getState().activeGradients).toEqual({ lens: true, deflect: true, vortex: false, hologram: false });
+    opticsStore.getState().setActiveGradients({ lens: true, deflect: true, vortex: false, axicon: false, hologram: false });
+    expect(opticsStore.getState().activeGradients).toEqual({ lens: true, deflect: true, vortex: false, axicon: false, hologram: false });
     opticsStore.getState().toggleGradient('vortex');
     expect(opticsStore.getState().activeGradients.vortex).toBe(true);
-    opticsStore.getState().setActiveGradients({ lens: false, deflect: false, vortex: false, hologram: false });
+    opticsStore.getState().toggleGradient('axicon');
+    expect(opticsStore.getState().activeGradients.axicon).toBe(true);
+    opticsStore.getState().setDeviceType('axicon');
+    expect(opticsStore.getState().deviceType).toBe('axicon');
+    expect(opticsStore.getState().activeGradients).toEqual({ lens: false, deflect: false, vortex: false, axicon: true, hologram: false });
+    opticsStore.getState().setAxiconNA(0.5);
+    expect(opticsStore.getState().axiconNA).toBe(0.5);
+    opticsStore.getState().setAxiconNA(1.5);
+    expect(opticsStore.getState().axiconNA).toBe(0.85);
+    opticsStore.getState().setAxiconNA(-1.5);
+    expect(opticsStore.getState().axiconNA).toBe(-0.85);
+    opticsStore.getState().setAxiconNA(0.35);
+    opticsStore.getState().setActiveGradients({ lens: false, deflect: false, vortex: false, axicon: false, hologram: false });
     opticsStore.getState().setDeviceType('metalens');
     opticsStore.getState().toggleGradient('lens');
     expect(opticsStore.getState().activeGradients.lens).toBe(true);
@@ -248,6 +263,10 @@ describe('OpticsStore Reactive State Management', () => {
     expect(template).toContain('id="btn-toggle-xy-mode"');
     expect(template).toContain('data-gradient="lens"');
     expect(template).toContain('data-gradient="vortex"');
+    expect(template).toContain('data-gradient="axicon"');
+    expect(template).toContain('data-preset="single-axicon"');
+    expect(template).toContain('data-preset="bessel-vortex"');
+    expect(template).toContain('data-preset="ring-focus"');
     expect(template).toContain('data-preset="offaxis-lens"');
     expect(template).toContain('data-preset="focused-vortex"');
   });

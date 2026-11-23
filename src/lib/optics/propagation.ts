@@ -164,8 +164,9 @@ function maskKey(mask: number[][]): string {
 /** Identifies the scalar device: everything that changes the dynamic-phase lattice field. */
 function scalarKey(p: FarFieldInput): string {
   const mask = p.hologram && p.cghPhaseMask ? maskKey(p.cghPhaseMask) : '0';
+  const axicon = p.axicon ? `1|${p.axiconNA ?? 0}` : '0';
   return [p.wavelength, p.designWavelength, p.focalLength, p.diameter, p.deflectionAngle,
-    p.topologicalCharge, p.lens, p.deflect, p.vortex, p.hologram, mask].join('|');
+    p.topologicalCharge, p.lens, p.deflect, p.vortex, p.hologram, mask, axicon].join('|');
 }
 
 /** Identifies everything that changes the displayed field, polarization included. */

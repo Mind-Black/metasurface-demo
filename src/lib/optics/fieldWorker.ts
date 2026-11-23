@@ -24,6 +24,9 @@ function validate(request: FieldRequest): string | null {
   if (![halfX, nx, z ?? 0].every(Number.isFinite) || !(nx > 0)) return 'non-finite or empty window';
   if (request.kind !== 'far' && (!Number.isFinite(halfV) || !(nv > 0))) return 'non-finite or empty window';
   if (!DEVICE_NUMBERS.every((key) => Number.isFinite(device[key]))) return 'non-finite device';
+  if (device.axiconNA !== undefined && (!Number.isFinite(device.axiconNA) || Math.abs(device.axiconNA) >= 1)) {
+    return 'non-finite device';
+  }
   if (device.stokes && (!device.stokes.every(Number.isFinite) || Math.hypot(device.stokes[1], device.stokes[2], device.stokes[3]) === 0)) {
     return 'invalid polarization';
   }
@@ -35,8 +38,8 @@ function validate(request: FieldRequest): string | null {
       !Number.isFinite(design.basis.chi) || Math.abs(design.basis.chi) > Math.PI / 4)) return 'invalid design basis';
     if (design.profiles.length !== 2) return 'two profiles are required';
     for (const profile of design.profiles) {
-      if (![profile.focalLength, profile.deflectionAngle, profile.topologicalCharge, profile.hologramIterations].every(Number.isFinite)
-        || profile.focalLength <= 0) return 'invalid phase profile';
+      if (![profile.focalLength, profile.deflectionAngle, profile.topologicalCharge, profile.axiconNA, profile.hologramIterations].every(Number.isFinite)
+        || profile.focalLength <= 0 || Math.abs(profile.axiconNA) >= 1) return 'invalid phase profile';
       const mask = profile.cghPhaseMask;
       if (profile.hologram && (!mask?.length || !mask[0]?.length ||
         mask.some(row => row.length !== mask[0].length || row.some(v => !Number.isFinite(v))))) return 'invalid hologram mask';

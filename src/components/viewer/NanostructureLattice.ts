@@ -258,9 +258,9 @@ export class NanostructureLatticeViewer {
     const unsupported = vector ? librarySupport(state.designWavelength, state.designWavelength,
       state.material, state.pitchNm, state.heightNm) : null;
     const key = [state.diameter, state.designWavelength, state.focalLength,
-      state.deflectionAngle, state.topologicalCharge, state.heightNm, state.pitchNm,
+      state.deflectionAngle, state.topologicalCharge, state.axiconNA, state.heightNm, state.pitchNm,
       state.material, state.phaseMechanism,
-      ag.lens, ag.deflect, ag.vortex, ag.hologram,
+      ag.lens, ag.deflect, ag.vortex, ag.axicon, ag.hologram,
       designKey(state.design ?? { kind: 'legacy' }), state.phaseMapChannel, state.responseModel].join(':');
     if (key === this.phaseMapKey && state.cghPhaseMask === this.phaseMapMask) return;
 

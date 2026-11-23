@@ -38,6 +38,23 @@ test.describe('Optical Metasurfaces Platform E2E Tests', () => {
     await expect(vortexBtn).toHaveClass(/active/);
     await expect(page.locator('#demo-controls-vortex')).toBeVisible();
 
+    const axiconBtn = page.locator('button[data-preset="single-axicon"]');
+    await axiconBtn.click();
+    await expect(axiconBtn).toHaveClass(/active/);
+    await expect(page.locator('#demo-controls-axicon')).toBeVisible();
+    await page.locator('button[data-demo-axicon-na="0.50"]').click();
+    await expect(page.locator('#demo-label-axicon-na')).toHaveText('+0.50');
+    await expect(page.locator('#demo-axicon-info')).toContainText('Bessel zone');
+
+    const besselVortexBtn = page.locator('button[data-preset="bessel-vortex"]');
+    await besselVortexBtn.click();
+    await expect(besselVortexBtn).toHaveClass(/active/);
+    await expect(page.locator('#demo-controls-axicon')).toBeVisible();
+    await expect(page.locator('#demo-controls-vortex')).toBeVisible();
+
+    await vortexBtn.click();
+    await expect(vortexBtn).toHaveClass(/active/);
+
     const intensityBtn = page.locator('#wavefield-card button[data-render="intensity"]');
     await intensityBtn.click();
     await expect(page.locator('button[data-render="intensity"][aria-selected="true"]')).toHaveCount(3);

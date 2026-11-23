@@ -7,7 +7,7 @@ import { generateTargetBitmap, runGerchbergSaxton, sampleHologramPhase } from '@
 
 const circularError = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 const state = { ...opticsStore.getState(),
-  activeGradients: { lens: false, deflect: false, vortex: false, hologram: true },
+  activeGradients: { lens: false, deflect: false, vortex: false, axicon: false, hologram: true },
   cghPhaseMask: runGerchbergSaxton(generateTargetBitmap('mu'), 20).phaseMask };
 
 describe('phase retrieval to pillar geometry and map', () => {
@@ -59,8 +59,8 @@ describe('phase retrieval to pillar geometry and map', () => {
   });
 
   it('uses the same design phase as the far-field model for superimposed gradients', () => {
-    const combined = { ...state, wavelength: 0.65,
-      activeGradients: { lens: true, deflect: true, vortex: true, hologram: true } };
+    const combined = { ...state, wavelength: 0.65, axiconNA: 0.4,
+      activeGradients: { lens: true, deflect: true, vortex: true, axicon: true, hologram: true } };
     for (const [x, y] of [[-5, 3], [6, -4], [0, 0]]) {
       const ideal = aperturePhase({ ...combined, ...combined.activeGradients }, x, y);
       expect(circularError(latticeTargetPhase(combined, x, y), ideal)).toBeLessThan(1e-12);
